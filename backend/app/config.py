@@ -13,11 +13,13 @@ class Settings(BaseSettings):
     )
 
     gemini_api_key: str = os.getenv("GEMINI_API_KEY", "")
+    gemini_model: str = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
 
     database_url: str = os.getenv("DATABASE_URL", "sqlite:///./nyaya_sathi.db")
 
     class Config:
         env_file = ".env"
+        extra = "ignore"
 
 
 settings = Settings()

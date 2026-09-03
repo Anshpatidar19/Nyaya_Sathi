@@ -16,6 +16,8 @@ Docs referenced for these endpoints:
   POST /docmeta/<docid>/                             -> metadata only
 """
 
+import html
+import re
 from typing import Any, Dict, List, Optional
 
 import httpx
@@ -24,9 +26,28 @@ from .config import settings
 
 KANOON_TIMEOUT = 20.0
 
+_TAG_RE = re.compile(r"<[^>]+>")
+_WS_RE = re.compile(r"\s+")
+
 
 class KanoonError(RuntimeError):
     pass
+
+
+def strip_html(raw: str) -> str:
+    """Kanoon returns judgment text as HTML; flatten it to plain text.
+
+    Used both for search headlines (which contain <b> match highlights) and
+    for full documents before they're sent to the synthesis agent.
+    """
+    if not raw:
+        return ""
+    text = re.sub(r"(?is)<(script|style).*?</\1>", " ", raw)
+    text = re.sub(r"(?i)<br\s*/?>|</p>|</div>|</tr>", "\n", text)
+    text = _TAG_RE.sub(" ", text)
+    text = html.unescape(text)
+    text = _WS_RE.sub(" ", text)
+    return text.strip()
 
 
 def _headers() -> Dict[str, str]:
@@ -49,14 +70,18 @@ async def search(query: str, page: int = 0) -> List[Dict[str, Any]]:
 
     results = []
     for doc in data.get("docs", []):
+        tid = doc.get("tid")
+        if tid is None:
+            continue
         results.append(
             {
-                "docid": str(doc.get("tid")),
-                "title": doc.get("title"),
+                "docid": str(tid),
+                "title": strip_html(doc.get("title") or "") or "Untitled",
                 "court": doc.get("docsource"),
                 "date": doc.get("publishdate"),
-                "snippet": doc.get("headline"),
-                "url": f"https://indiankanoon.org/doc/{doc.get('tid')}/",
+                "snippet": strip_html(doc.get("headline") or ""),
+                # Public, human-readable page — this is what the UI links to.
+                "url": f"https://indiankanoon.org/doc/{tid}/",
             }
         )
     return results
