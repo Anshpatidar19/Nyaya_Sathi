@@ -13,9 +13,16 @@ class Settings(BaseSettings):
     )
 
     gemini_api_key: str = os.getenv("GEMINI_API_KEY", "")
-    gemini_model: str = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
+    gemini_model: str = os.getenv("GEMINI_MODEL", "gemini-3.1-flash-lite")
 
-    database_url: str = os.getenv("DATABASE_URL", "sqlite:///./nyaya_sathi.db")
+    # Supabase Postgres. Session pooler URI from
+    # Project Settings -> Database -> Connection string -> URI
+    database_url: str = os.getenv("DATABASE_URL", "")
+
+    # Supabase Storage
+    supabase_url: str = os.getenv("SUPABASE_URL", "")          # https://<ref>.supabase.co
+    supabase_service_key: str = os.getenv("SUPABASE_SERVICE_KEY", "")  # service_role key
+    supabase_bucket: str = os.getenv("SUPABASE_BUCKET", "user-documents")
 
     class Config:
         env_file = ".env"
@@ -23,3 +30,9 @@ class Settings(BaseSettings):
 
 
 settings = Settings()
+
+if not settings.database_url:
+    raise RuntimeError(
+        "DATABASE_URL is not set. Copy backend/.env.example to backend/.env and "
+        "paste your Supabase connection string."
+    )

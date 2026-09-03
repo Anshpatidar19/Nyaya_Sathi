@@ -77,3 +77,17 @@ class KanoonSearchResult(BaseModel):
     date: Optional[str] = None
     snippet: Optional[str] = None
     url: Optional[str] = None
+
+
+# ---------- Documents ----------
+
+class DocumentOut(BaseModel):
+    id: int
+    filename: str
+    content_type: Optional[str] = None
+    size_bytes: Optional[int] = None
+    note: Optional[str] = None
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
