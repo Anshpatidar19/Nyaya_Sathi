@@ -14,7 +14,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy.orm import Session
 
-from . import kanoon, models, reasoning, schemas, statutes, storage
+from . import drafting, kanoon, models, reasoning, schemas, statutes, storage
 from .auth import create_access_token, get_current_user, hash_password, verify_password
 from .database import Base, SessionLocal, engine, get_db
 
@@ -266,3 +266,82 @@ async def kanoon_doc(docid: str, current_user: models.User = Depends(get_current
         return await kanoon.get_document(docid)
     except kanoon.KanoonError as exc:
         raise HTTPException(status_code=503, detail=str(exc))
+
+# ---------------- Drafting & review ----------------
+
+@app.get("/draft/types")
+def draft_types(current_user: models.User = Depends(get_current_user)):
+    """Catalogue of document types the drafting agent can produce."""
+    return drafting.list_types()
+
+
+@app.post("/draft", response_model=schemas.DraftResponse)
+async def create_draft(
+    payload: schemas.DraftRequest,
+    current_user: models.User = Depends(get_current_user),
+):
+    if not payload.instructions.strip():
+        raise HTTPException(status_code=400, detail="Describe what you need drafted.")
+
+    try:
+        result = await drafting.draft(
+            payload.doc_type, payload.instructions, payload.details
+        )
+    except Exception as exc:
+        logger.exception("Draft failed: %s", exc)
+        raise HTTPException(status_code=503, detail="Could not produce a draft. Try again.")
+
+    if not result["body"]:
+        raise HTTPException(
+            status_code=422,
+            detail="Not enough information to draft this. Add more detail and retry.",
+        )
+    return result
+
+
+@app.post("/review", response_model=schemas.ReviewResponse)
+async def review_document(
+    payload: schemas.ReviewRequest,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user),
+):
+    """Red-line a counterparty's document. Accepts raw text or an uploaded file id."""
+    text = (payload.document_text or "").strip()
+
+    if payload.document_id and not text:
+        doc = (
+            db.query(models.Document)
+            .filter(
+                models.Document.id == payload.document_id,
+                models.Document.user_id == current_user.id,   # ownership check
+            )
+            .first()
+        )
+        if not doc:
+            raise HTTPException(status_code=404, detail="Document not found.")
+
+        try:
+            url = await storage.signed_url(doc.storage_path, expires_in=120)
+            async with httpx.AsyncClient(timeout=60.0) as client:
+                blob = await client.get(url)
+                blob.raise_for_status()
+            text = drafting.extract_text(blob.content, doc.content_type, doc.filename)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+        except Exception as exc:
+            logger.exception("Could not read stored document %s: %s", doc.id, exc)
+            raise HTTPException(status_code=503, detail="Could not read that document.")
+
+    if not text:
+        raise HTTPException(
+            status_code=400,
+            detail="Provide document_text, or a document_id of a file you uploaded.",
+        )
+
+    try:
+        return await drafting.review(text, payload.doc_type, payload.context)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except Exception as exc:
+        logger.exception("Review failed: %s", exc)
+        raise HTTPException(status_code=503, detail="Could not review that document.")

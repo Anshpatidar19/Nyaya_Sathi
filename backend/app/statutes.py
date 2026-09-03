@@ -45,14 +45,15 @@ _STOPWORDS = {
 #                  never presents repealed law as live law.
 #   url_template - per-section public page, so citations are clickable.
 def _coi_url(section: str) -> str:
-    """Link to the full article. Indian Kanoon carries the Constitution as
-    indexed documents, is HTTPS, and has no user-comment surface."""
+    """Per-article page. Zero-padded to three digits, suffix lowercased:
+    "21" -> article_021, "21A" -> article_021a."""
     if section.lower() == "preamble":
-        return "https://indiankanoon.org/search/?formInput=preamble+constitution+of+india"
-    return (
-        "https://indiankanoon.org/search/?formInput="
-        f"Article+{section}+in+The+Constitution+Of+India"
-    )
+        return "https://www.constitutionofindia.net/constitution_of_india/preamble/"
+    m = re.match(r"(\d+)([A-Za-z]*)", section)
+    if not m:
+        return "https://www.constitutionofindia.net/articles/"
+    num, suffix = m.groups()
+    return f"http://constitutionofindia.etal.in/article_{int(num):03d}{suffix.lower()}/"
 
 
 ACTS: Dict[str, Dict[str, Any]] = {
@@ -105,6 +106,36 @@ ACTS: Dict[str, Dict[str, Any]] = {
         "superseded_by": "Bharatiya Sakshya Adhiniyam, 2023 (in force from 1 July 2024)",
         "url_template": None,
         "priority": 2,
+        "unit": "Section",
+    },
+    "contract": {
+        "file": "contract.json",
+        "name": "Indian Contract Act, 1872",
+        "short": "Contract Act",
+        "current": True,
+        "superseded_by": None,
+        "url_template": "https://indiankanoon.org/search/?formInput=section+{section}+indian+contract+act",
+        "priority": 1,
+        "unit": "Section",
+    },
+    "tpa": {
+        "file": "tpa.json",
+        "name": "Transfer of Property Act, 1882",
+        "short": "TP Act",
+        "current": True,
+        "superseded_by": None,
+        "url_template": "https://indiankanoon.org/search/?formInput=section+{section}+transfer+of+property+act",
+        "priority": 1,
+        "unit": "Section",
+    },
+    "rti": {
+        "file": "rti.json",
+        "name": "Right to Information Act, 2005",
+        "short": "RTI Act",
+        "current": True,
+        "superseded_by": None,
+        "url_template": "https://indiankanoon.org/search/?formInput=section+{section}+right+to+information+act",
+        "priority": 1,
         "unit": "Section",
     },
     "nia": {

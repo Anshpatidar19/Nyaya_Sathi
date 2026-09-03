@@ -91,3 +91,49 @@ class DocumentOut(BaseModel):
 
     class Config:
         from_attributes = True
+
+    # ---------- Drafting & review ----------
+
+class DraftRequest(BaseModel):
+    doc_type: Optional[str] = None
+    instructions: str
+    details: Optional[dict] = None
+
+
+class DraftCitation(BaseModel):
+    title: str
+    source: str
+    url: Optional[str] = None
+
+
+class DraftResponse(BaseModel):
+    title: str
+    body: str
+    citations: list[DraftCitation] = []
+    missing_information: list[str] = []
+    notes: list[str] = []
+    needs_advocate: bool = False
+
+
+class ReviewRequest(BaseModel):
+    document_text: Optional[str] = None
+    document_id: Optional[int] = None      # review a previously uploaded file
+    doc_type: Optional[str] = None
+    context: Optional[str] = None
+
+
+class ReviewFlag(BaseModel):
+    clause: str
+    issue: str
+    suggestion: str
+    severity: str
+    basis: str
+    citation: Optional[DraftCitation] = None
+
+
+class ReviewResponse(BaseModel):
+    summary: str
+    risk_level: str
+    flags: list[ReviewFlag] = []
+    missing_clauses: list[str] = []
+    truncated: bool = False
