@@ -1,17 +1,29 @@
 import json
+import logging
 
-from fastapi import Depends, FastAPI, HTTPException, status
+from fastapi import (
+    Depends,
+    FastAPI,
+    File,
+    Form,
+    HTTPException,
+    UploadFile,
+    status,
+)
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy.orm import Session
 
-from . import kanoon, models, reasoning, schemas
+from . import kanoon, models, reasoning, schemas, statutes, storage
 from .auth import create_access_token, get_current_user, hash_password, verify_password
 from .database import Base, SessionLocal, engine, get_db
 
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
 Base.metadata.create_all(bind=engine)
 
-app = FastAPI(title="Nyaya Sathi API", version="0.1.0")
+app = FastAPI(title="Nyaya Sathi API", version="0.2.0")
 
 app.add_middleware(
     CORSMiddleware,
@@ -20,6 +32,25 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.on_event("startup")
+async def startup_checks():
+    """Fail loudly at boot rather than silently giving worse answers later."""
+    acts = statutes.available_acts()
+    if acts:
+        logger.info("Statute index loaded: %s", ", ".join(acts))
+    else:
+        logger.warning(
+            "No statute data found in backend/data/. Run: "
+            "python -m app.ingest_bns  and  python -m app.ingest_constitution"
+        )
+
+    try:
+        await storage.ensure_bucket()
+        logger.info("Supabase Storage bucket ready: %s", storage.settings.supabase_bucket)
+    except storage.StorageError as exc:
+        logger.warning("Supabase Storage not configured: %s", exc)
 
 
 @app.get("/health")
@@ -103,6 +134,119 @@ def ask_history(
         .limit(50)
         .all()
     )
+
+
+# ---------------- Documents ----------------
+# Files live in a PRIVATE Supabase Storage bucket. Nothing is served by a
+# public URL - downloads go through /documents/{id}/url, which checks
+# ownership first and returns a short-lived signed link.
+
+@app.post("/documents", response_model=schemas.DocumentOut, status_code=status.HTTP_201_CREATED)
+async def upload_document(
+    file: UploadFile = File(...),
+    note: str | None = Form(None),
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user),
+):
+    if file.content_type not in storage.ALLOWED_TYPES:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "That file type isn't supported. Upload a PDF, image, Word "
+                "document, or plain text file."
+            ),
+        )
+
+    data = await file.read()
+    if not data:
+        raise HTTPException(status_code=400, detail="That file is empty.")
+    if len(data) > storage.MAX_BYTES:
+        raise HTTPException(
+            status_code=413,
+            detail=f"Files must be under {storage.MAX_BYTES // (1024 * 1024)} MB.",
+        )
+
+    path = storage.build_path(current_user.id, file.filename)
+    try:
+        await storage.upload(path, data, file.content_type)
+    except storage.StorageError as exc:
+        logger.error("Upload failed for user %s: %s", current_user.id, exc)
+        raise HTTPException(status_code=503, detail="Could not store that file. Please try again.")
+
+    doc = models.Document(
+        user_id=current_user.id,
+        filename=storage.safe_name(file.filename),
+        storage_path=path,
+        content_type=file.content_type,
+        size_bytes=len(data),
+        note=note,
+    )
+    db.add(doc)
+    db.commit()
+    db.refresh(doc)
+    return doc
+
+
+@app.get("/documents", response_model=list[schemas.DocumentOut])
+def list_documents(
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user),
+):
+    return (
+        db.query(models.Document)
+        .filter(models.Document.user_id == current_user.id)
+        .order_by(models.Document.created_at.desc())
+        .all()
+    )
+
+
+@app.get("/documents/{doc_id}/url")
+async def document_url(
+    doc_id: int,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user),
+):
+    """Time-limited download link for one of the caller's own documents."""
+    doc = (
+        db.query(models.Document)
+        .filter(
+            models.Document.id == doc_id,
+            models.Document.user_id == current_user.id,  # ownership check
+        )
+        .first()
+    )
+    if not doc:
+        raise HTTPException(status_code=404, detail="Document not found.")
+
+    try:
+        url = await storage.signed_url(doc.storage_path, expires_in=3600)
+    except storage.StorageError as exc:
+        logger.error("Signing failed for doc %s: %s", doc_id, exc)
+        raise HTTPException(status_code=503, detail="Could not generate a download link.")
+
+    return {"url": url, "expires_in": 3600}
+
+
+@app.delete("/documents/{doc_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_document(
+    doc_id: int,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user),
+):
+    doc = (
+        db.query(models.Document)
+        .filter(
+            models.Document.id == doc_id,
+            models.Document.user_id == current_user.id,
+        )
+        .first()
+    )
+    if not doc:
+        raise HTTPException(status_code=404, detail="Document not found.")
+
+    await storage.delete(doc.storage_path)
+    db.delete(doc)
+    db.commit()
 
 
 # ---------------- Indian Kanoon passthrough (for the research/citation view) ----------------
