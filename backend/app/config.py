@@ -21,7 +21,11 @@ class Settings(BaseSettings):
 
     # Supabase Storage
     supabase_url: str = os.getenv("SUPABASE_URL", "")          # https://<ref>.supabase.co
-    supabase_service_key: str = os.getenv("SUPABASE_SERVICE_KEY", "")  # service_role key
+    supabase_service_key: str = os.getenv("SUPABASE_SERVICE_KEY", "")
+    # Public key, used for signup/login calls. Safe to expose.
+    supabase_anon_key: str = os.getenv("SUPABASE_ANON_KEY", "")
+    # Where Supabase sends users after they click a confirmation or reset link.
+    site_url: str = os.getenv("SITE_URL", "http://localhost:5173")  # service_role key
     supabase_bucket: str = os.getenv("SUPABASE_BUCKET", "user-documents")
 
     class Config:
