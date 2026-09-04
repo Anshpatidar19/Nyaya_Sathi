@@ -34,18 +34,57 @@ class User(Base):
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
 
     queries = relationship("QueryLog", back_populates="user")
+    conversations = relationship(
+        "Conversation", back_populates="user", cascade="all, delete-orphan"
+    )
     documents = relationship(
         "Document", back_populates="user", cascade="all, delete-orphan"
     )
 
 
+class Conversation(Base):
+    """A thread of questions. Follow-ups need somewhere to hang off.
+
+    Title is taken from the first question so the sidebar has something
+    readable without a separate summarisation call.
+    """
+
+    __tablename__ = "conversations"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    title = Column(String, nullable=False, default="New conversation")
+    mode = Column(String, nullable=False, default="ask")   # ask | draft | review
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+    updated_at = Column(
+        DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow
+    )
+
+    user = relationship("User", back_populates="conversations")
+    turns = relationship(
+        "QueryLog",
+        back_populates="conversation",
+        cascade="all, delete-orphan",
+        order_by="QueryLog.created_at",
+    )
+
+
 class QueryLog(Base):
-    """Every question a user asks, and the answer that was returned."""
+    """One turn: a question and the answer that was returned."""
 
     __tablename__ = "query_logs"
 
     id = Column(Integer, primary_key=True, index=True)
     user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    # Nullable so rows that predate threading still load.
+    conversation_id = Column(
+        Integer, ForeignKey("conversations.id"), nullable=True, index=True
+    )
+    # Which surface produced this turn, so a reloaded thread renders correctly.
+    mode = Column(String, nullable=False, default="ask")
+    # Full response payload, so a refreshed page shows the same rich result
+    # (citations, flags, next steps) rather than plain text.
+    payload_json = Column(Text, nullable=True)
     question = Column(Text, nullable=False)
     answer_title = Column(String, nullable=True)
     answer_body = Column(Text, nullable=True)
@@ -53,6 +92,7 @@ class QueryLog(Base):
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
 
     user = relationship("User", back_populates="queries")
+    conversation = relationship("Conversation", back_populates="turns")
 
 
 class Document(Base):
