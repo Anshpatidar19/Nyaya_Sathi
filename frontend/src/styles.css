@@ -408,3 +408,13 @@ footer.site-footer{border-top:1px solid var(--line); padding:56px 0 34px; margin
   color:var(--accent-dark); text-decoration:none;
 }
 .flag-cite:hover{text-decoration:underline;}
+
+/* Query-matched extract shown under each Kanoon source */
+.cite-snippet{
+  margin-top:6px;
+  font-size:12.5px; line-height:1.55; color:var(--ink-faint);
+  display:-webkit-box; -webkit-line-clamp:3; -webkit-box-orient:vertical;
+  overflow:hidden;
+}
+a.cite-link{align-items:flex-start;}
+a.cite-link .num{margin-top:2px;}

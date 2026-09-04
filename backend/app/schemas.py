@@ -43,6 +43,10 @@ class Citation(BaseModel):
     source: str
     docid: Optional[str] = None
     url: Optional[str] = None
+    # Query-matched extract from the judgment. Comes free with the Kanoon
+    # search call, and lets the user see why a source was cited instead of
+    # having to click out and read the whole case.
+    snippet: Optional[str] = None
 
 
 class AskRequest(BaseModel):

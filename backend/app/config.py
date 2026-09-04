@@ -11,6 +11,11 @@ class Settings(BaseSettings):
     indian_kanoon_base_url: str = os.getenv(
         "INDIAN_KANOON_BASE_URL", "https://api.indiankanoon.org"
     )
+    # /docfragment/ returns passages matching the query instead of the whole
+    # judgment - cheaper context and better grounding. It is not enabled on
+    # every token; when it isn't, it answers 200 with an errmsg body. Leave
+    # this false unless you've confirmed your plan includes it.
+    kanoon_use_fragments: bool = os.getenv("KANOON_USE_FRAGMENTS", "false").lower() == "true"
 
     gemini_api_key: str = os.getenv("GEMINI_API_KEY", "")
     gemini_model: str = os.getenv("GEMINI_MODEL", "gemini-3.1-flash-lite")
