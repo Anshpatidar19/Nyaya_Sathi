@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '../AuthContext';
+import { resendConfirmation } from '../api';
 
 const STATES = [
   'Madhya Pradesh', 'Maharashtra', 'Delhi', 'Karnataka', 'Tamil Nadu',
@@ -13,6 +14,8 @@ export default function Register() {
   const [form, setForm] = useState({ name: '', email: '', password: '', state: 'Madhya Pradesh' });
   const [error, setError] = useState('');
   const [submitting, setSubmitting] = useState(false);
+  const [sentTo, setSentTo] = useState('');
+  const [resent, setResent] = useState(false);
 
   function update(field, value) {
     setForm((f) => ({ ...f, [field]: value }));
@@ -27,13 +30,43 @@ export default function Register() {
     }
     setSubmitting(true);
     try {
-      await register(form);
-      navigate('/ask');
+      const data = await register(form);
+      if (data.confirmation_required) {
+        setSentTo(data.email || form.email);
+      } else {
+        navigate('/ask');
+      }
     } catch (err) {
       setError(err.message);
     } finally {
       setSubmitting(false);
     }
+  }
+
+  if (sentTo) {
+    return (
+      <div className="auth-shell">
+        <div className="auth-card">
+          <h1>Check your inbox</h1>
+          <p className="auth-sub">
+            We've sent a confirmation link to <strong>{sentTo}</strong>.
+            Click it, then come back and log in.
+          </p>
+          <p className="auth-sub" style={{ marginTop: 16 }}>
+            Nothing arrived? Look in spam, or{' '}
+            <button
+              type="button"
+              className="link-btn"
+              onClick={() => resendConfirmation(sentTo).then(() => setResent(true)).catch(() => setResent(true))}
+            >
+              send it again
+            </button>
+            {resent && <span className="auth-sub"> — sent.</span>}
+          </p>
+          <p className="auth-alt"><Link to="/login">Go to log in</Link></p>
+        </div>
+      </div>
+    );
   }
 
   return (

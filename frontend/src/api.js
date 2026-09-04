@@ -20,6 +20,26 @@ export async function registerUser({ name, email, password, state }) {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ name, email, password, state }),
   });
+  // May return { confirmation_required: true } with no token - the user has
+  // to click the emailed link before they can log in.
+  return handle(res);
+}
+
+export async function resendConfirmation(email) {
+  const res = await fetch(`${BASE_URL}/auth/resend-confirmation`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email }),
+  });
+  return handle(res);
+}
+
+export async function forgotPassword(email) {
+  const res = await fetch(`${BASE_URL}/auth/forgot-password`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email }),
+  });
   return handle(res);
 }
 

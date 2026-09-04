@@ -32,9 +32,13 @@ export function AuthProvider({ children }) {
 
   async function register(payload) {
     const data = await registerUser(payload);
-    localStorage.setItem('ns_token', data.access_token);
-    setToken(data.access_token);
-    setUser(data.user);
+    // With email confirmation on there is no session yet - the caller shows
+    // a "check your inbox" screen instead of navigating into the app.
+    if (data.access_token) {
+      localStorage.setItem('ns_token', data.access_token);
+      setToken(data.access_token);
+      setUser(data.user);
+    }
     return data;
   }
 
