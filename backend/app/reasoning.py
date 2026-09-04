@@ -14,15 +14,15 @@ import logging
 import re
 from typing import Any, Dict, List, Optional
 
-from . import gemini, kanoon, statutes
+from . import gemini, kanoon, routing, statutes
 from .config import settings
 from .schemas import AskResponse, Citation
 
 logger = logging.getLogger(__name__)
 
-TOP_K = 3          # case-law results from Kanoon
+TOP_K = 3          # case-law results considered from Kanoon
 TOP_STATUTES = 3   # bare-act sections retrieved locally
-DOC_CHARS = 6000   # grounding text per judgment
+DOC_CHARS = 6000   # cap on grounding text per judgment (fallback path only)
 
 # ---------------------------------------------------------------------------
 # Support resources
@@ -75,42 +75,89 @@ def refine_query(question: str, state: Optional[str]) -> str:
 # Agent 2 - Retrieval
 # ---------------------------------------------------------------------------
 
-async def _hydrate(results: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    """Attach real judgment text so synthesis is grounded, not headline-guessing."""
+async def _hydrate(results: List[Dict[str, Any]], query: str) -> List[Dict[str, Any]]:
+    """Attach judgment text so synthesis is grounded, not headline-guessing.
+
+    Three tiers, cheapest first:
+      1. the query-matched fragment  - the passages that actually matched
+      2. the full document, truncated - fallback if fragments aren't available
+      3. the search headline          - already paid for, costs nothing extra
+
+    Tier 1 matters. A judgment can run to hundreds of pages, and the first
+    6,000 characters are the cause title, counsel appearances and procedural
+    history - the least useful part of the document.
+    """
     hydrated: List[Dict[str, Any]] = []
     for r in results:
-        text = kanoon.strip_html(r.get("snippet") or "")
+        headline = kanoon.strip_html(r.get("snippet") or "")
+        text = headline
         docid = r.get("docid")
+
         if docid:
             try:
-                doc = await kanoon.get_document(docid)
-                full = kanoon.strip_html(doc.get("doc") or "")
-                if full:
-                    text = full[:DOC_CHARS]
+                frag = await kanoon.fragment(docid, query)
+                if frag:
+                    text = frag
+                # An empty fragment is NOT a reason to fetch the full document:
+                # that would mean two billed calls per judgment. The search
+                # headline below is already paid for and is enough to keep the
+                # source in play.
+            except kanoon.FragmentUnavailable:
+                # The fragment call itself failed, so falling back is the only
+                # way to get text for this judgment. One call, not two.
+                try:
+                    doc = await kanoon.get_document(docid)
+                    full = kanoon.strip_html(doc.get("doc") or "")
+                    if full:
+                        text = full[:DOC_CHARS]
+                except Exception as exc:
+                    logger.warning("Kanoon doc fetch failed for %s: %s", docid, exc)
             except Exception as exc:
-                logger.warning("Kanoon doc fetch failed for %s: %s", docid, exc)
-        hydrated.append({**r, "text": text})
+                logger.warning("Kanoon text fetch failed for %s: %s", docid, exc)
+
+        hydrated.append({**r, "text": text, "headline": headline})
     return hydrated
 
 
 async def retrieve(question: str, state: Optional[str]) -> List[Dict[str, Any]]:
-    """Bare acts first, then case law. Either source alone is enough to answer."""
-    # Act-level question ("tell me about BNS") - BM25 can't help, answer directly.
+    """Local statutes first. Kanoon only when case law would actually help.
+
+    Kanoon is prepaid and metered, so every call has to earn itself. The
+    routing gate decides; the reason is logged either way so you can see
+    where credit goes.
+    """
     overview = statutes.act_overview(question)
+    statute_hits = [] if overview else statutes.search(question, limit=TOP_STATUTES)
+
     if overview:
-        return [statutes.overview_as_source(overview)]
+        sources = [statutes.overview_as_source(overview)]
+    else:
+        sources = [statutes.as_source(s) for s in statute_hits]
 
-    statute_hits = statutes.search(question, limit=TOP_STATUTES)
-    sources = [statutes.as_source(s) for s in statute_hits]
+    decision = routing.decide(question, statute_hits, overview)
 
+    if not decision.call_kanoon:
+        logger.info("Kanoon skipped (%s) - saved ~%d calls", decision.reason, 1 + 2)
+        return sources
+
+    logger.info("Kanoon called (%s)", decision.reason)
+
+    query = refine_query(question, None)   # state goes in the court filter now
     try:
-        results = await kanoon.search(refine_query(question, state))
+        results = await kanoon.search(query, state=state)
     except Exception as exc:
         logger.warning("Kanoon search failed: %s", exc)
-        results = []
+        return sources
 
-    if results:
-        sources.extend(await _hydrate(results[:TOP_K]))
+    if not results:
+        # An empty result set can mean a dry balance - the API returns nothing
+        # rather than erroring when credit runs out.
+        logger.warning("Kanoon returned no results for %r - check API balance", query)
+        return sources
+
+    # Spend document fetches on the judgments most worth reading.
+    ranked = kanoon.rank_by_citations(results[:TOP_K * 2], top=decision.doc_fetches)
+    sources.extend(await _hydrate(ranked, query))
 
     return sources
 
@@ -169,6 +216,10 @@ async def run_live_pipeline(question: str, state: str | None) -> AskResponse | N
             source=" · ".join(p for p in [s.get("court"), s.get("date")] if p) or "Source",
             docid=s.get("docid"),
             url=s.get("url"),
+            # The headline is a query-matched snippet already paid for by the
+            # search call. Showing it turns the source list from a
+            # bibliography into something the user can actually judge.
+            snippet=(s.get("headline") or s.get("snippet") or "")[:260] or None,
         )
         for s in chosen
     ]
@@ -179,8 +230,7 @@ async def run_live_pipeline(question: str, state: str | None) -> AskResponse | N
     ]
 
     # Statutes outside the ingested acts that matter here (e.g. the DV Act).
-    statute_hits = statutes.search(question, limit=TOP_STATUTES)
-    for law in statutes.related_laws(statute_hits):
+    for law in statutes.related_laws(statutes.search(question, limit=TOP_STATUTES)):
         next_steps.append(f"Also look at the {law['name']}. {law['why']}")
 
     if needs_support(question):

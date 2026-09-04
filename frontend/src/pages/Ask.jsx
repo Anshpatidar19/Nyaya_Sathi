@@ -382,6 +382,7 @@ function Citations({ items, label = 'Sources' }) {
             <div className="cite-text">
               <div className="cite-title">{c.title}</div>
               <div className="cite-sub">{c.source}</div>
+              {c.snippet && <div className="cite-snippet">{c.snippet}</div>}
             </div>
             {href && <span className="cite-arrow" aria-hidden="true">↗</span>}
           </>
