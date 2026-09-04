@@ -42,16 +42,39 @@ export async function fetchMe(token) {
   return handle(res);
 }
 
-export async function askQuestion(token, { question, state }) {
+export async function askQuestion(token, { question, state, conversation_id }) {
   const res = await fetch(`${BASE_URL}/ask`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
       Authorization: `Bearer ${token}`,
     },
-    body: JSON.stringify({ question, state }),
+    // conversation_id continues an existing thread; omit it to start one.
+    body: JSON.stringify({ question, state, conversation_id }),
   });
   return handle(res);
+}
+
+export async function fetchConversations(token) {
+  const res = await fetch(`${BASE_URL}/conversations`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  return handle(res);
+}
+
+export async function fetchConversation(token, id) {
+  const res = await fetch(`${BASE_URL}/conversations/${id}`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  return handle(res);
+}
+
+export async function deleteConversation(token, id) {
+  const res = await fetch(`${BASE_URL}/conversations/${id}`, {
+    method: 'DELETE',
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!res.ok) throw new Error('Could not delete that conversation.');
 }
 
 export async function fetchHistory(token) {

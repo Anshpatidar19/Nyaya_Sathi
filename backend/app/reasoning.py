@@ -61,6 +61,37 @@ _STOPWORDS = {
 }
 
 
+# A follow-up like "what about the deposit?" or "and if he refuses?" has
+# almost no retrievable content on its own. Carrying terms from the previous
+# turn is what makes threading work rather than just look like it does.
+_FOLLOWUP_RE = re.compile(
+    r"^\s*(and |but |so |then |also |what about|how about|what if|and if|"
+    r"can he|can she|can they|can i|does that|is that|why|why not|"
+    r"tell me more|more on that|explain that|elaborate|go on)\b",
+    re.IGNORECASE,
+)
+
+
+def is_followup(question: str, history: Optional[List[Dict[str, str]]]) -> bool:
+    """A short question, or one opening with a connective, inside a thread."""
+    if not history:
+        return False
+    q = question.strip()
+    if _FOLLOWUP_RE.match(q):
+        return True
+    # Very short questions inside a thread are almost always continuations.
+    return len(q.split()) <= 6
+
+
+def expand_followup(question: str, history: Optional[List[Dict[str, str]]]) -> str:
+    """Prepend the previous question's terms so retrieval has something to
+    work with. "What about the deposit?" alone retrieves nothing useful."""
+    if not history or not is_followup(question, history):
+        return question
+    prior = history[-1].get("question", "")
+    return f"{prior} {question}".strip()[:500]
+
+
 def refine_query(question: str, state: Optional[str]) -> str:
     """Strip conversational filler so Kanoon's search sees legal terms."""
     words = [w.strip("?.,!\"'()") for w in question.lower().split()]
@@ -93,7 +124,11 @@ async def _hydrate(results: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     return hydrated
 
 
-async def retrieve(question: str, state: Optional[str]) -> List[Dict[str, Any]]:
+async def retrieve(
+    question: str,
+    state: Optional[str],
+    history: Optional[List[Dict[str, str]]] = None,
+) -> List[Dict[str, Any]]:
     """Bare acts first, then case law. Either source alone is enough to answer."""
     # Act-level question ("tell me about BNS") - BM25 can't help, answer directly.
     overview = statutes.act_overview(question)
@@ -119,17 +154,21 @@ async def retrieve(question: str, state: Optional[str]) -> List[Dict[str, Any]]:
 # Full pipeline
 # ---------------------------------------------------------------------------
 
-async def run_live_pipeline(question: str, state: str | None) -> AskResponse | None:
+async def run_live_pipeline(
+    question: str,
+    state: str | None,
+    history: Optional[List[Dict[str, str]]] = None,
+) -> AskResponse | None:
     """Retrieval -> Synthesis -> Internal Validator."""
     if not settings.gemini_api_key:
         return None
 
-    sources = await retrieve(question, state)
+    sources = await retrieve(question, state, history)
     if not sources:
         return None
 
     try:
-        draft = await gemini.synthesize(question, state, sources)
+        draft = await gemini.synthesize(question, state, sources, history)
     except gemini.GeminiError as exc:
         logger.warning("Gemini synthesis failed: %s", exc)
         return None
@@ -194,8 +233,12 @@ async def run_live_pipeline(question: str, state: str | None) -> AskResponse | N
     )
 
 
-async def answer_question(question: str, state: str | None = None) -> AskResponse:
-    live = await run_live_pipeline(question, state)
+async def answer_question(
+    question: str,
+    state: str | None = None,
+    history: Optional[List[Dict[str, str]]] = None,
+) -> AskResponse:
+    live = await run_live_pipeline(question, state, history)
     if live is not None:
         return live
 
