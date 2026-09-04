@@ -11,11 +11,6 @@ class Settings(BaseSettings):
     indian_kanoon_base_url: str = os.getenv(
         "INDIAN_KANOON_BASE_URL", "https://api.indiankanoon.org"
     )
-    # /docfragment/ returns passages matching the query instead of the whole
-    # judgment - cheaper context and better grounding. It is not enabled on
-    # every token; when it isn't, it answers 200 with an errmsg body. Leave
-    # this false unless you've confirmed your plan includes it.
-    kanoon_use_fragments: bool = os.getenv("KANOON_USE_FRAGMENTS", "false").lower() == "true"
 
     gemini_api_key: str = os.getenv("GEMINI_API_KEY", "")
     gemini_model: str = os.getenv("GEMINI_MODEL", "gemini-3.1-flash-lite")
@@ -26,7 +21,11 @@ class Settings(BaseSettings):
 
     # Supabase Storage
     supabase_url: str = os.getenv("SUPABASE_URL", "")          # https://<ref>.supabase.co
-    supabase_service_key: str = os.getenv("SUPABASE_SERVICE_KEY", "")  # service_role key
+    supabase_service_key: str = os.getenv("SUPABASE_SERVICE_KEY", "")
+    # Public key, used for signup/login calls. Safe to expose.
+    supabase_anon_key: str = os.getenv("SUPABASE_ANON_KEY", "")
+    # Where Supabase sends users after they click a confirmation or reset link.
+    site_url: str = os.getenv("SITE_URL", "http://localhost:5173")  # service_role key
     supabase_bucket: str = os.getenv("SUPABASE_BUCKET", "user-documents")
 
     class Config:

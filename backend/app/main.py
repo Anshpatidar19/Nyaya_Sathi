@@ -14,8 +14,9 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy.orm import Session
 
-from . import drafting, kanoon, models, reasoning, schemas, statutes, storage
-from .auth import create_access_token, get_current_user, hash_password, verify_password
+from . import drafting, kanoon, models, reasoning, schemas, statutes, storage, supabase_auth
+from .auth import ensure_profile, get_current_user
+from .config import settings
 from .database import Base, SessionLocal, engine, get_db
 
 logging.basicConfig(level=logging.INFO)
@@ -60,38 +61,111 @@ def health():
 
 # ---------------- Auth ----------------
 
-@app.post("/auth/register", response_model=schemas.TokenOut, status_code=status.HTTP_201_CREATED)
-def register(payload: schemas.UserCreate, db: Session = Depends(get_db)):
+@app.post("/auth/register", status_code=status.HTTP_201_CREATED)
+async def register(payload: schemas.UserCreate, db: Session = Depends(get_db)):
+    """Create the account in Supabase Auth and send a confirmation email.
+
+    With email confirmation on, Supabase returns a user but NO session, so
+    there is no token to hand back. The user must click the link first.
+    That is the whole point: an address nobody controls never gets confirmed,
+    so fake signups can't reach the app.
+    """
     existing = db.query(models.User).filter(models.User.email == payload.email).first()
     if existing:
         raise HTTPException(status_code=400, detail="An account with this email already exists.")
 
-    user = models.User(
-        name=payload.name,
-        email=payload.email,
-        hashed_password=hash_password(payload.password),
-        state=payload.state,
-        preferred_language=payload.preferred_language,
-    )
-    db.add(user)
-    db.commit()
-    db.refresh(user)
+    try:
+        result = await supabase_auth.sign_up(
+            email=payload.email,
+            password=payload.password,
+            metadata={
+                "name": payload.name,
+                "state": payload.state,
+                "preferred_language": payload.preferred_language,
+            },
+        )
+    except supabase_auth.AuthError as exc:
+        raise HTTPException(status_code=exc.status, detail=str(exc))
 
-    token = create_access_token(subject=user.email)
-    return schemas.TokenOut(access_token=token, user=schemas.UserOut.model_validate(user))
+    supa_user = result.get("user") or result
+    auth_id = supa_user.get("id")
+
+    # Create the profile row now so the user's details aren't lost, but it
+    # stays inert until they confirm and log in.
+    if auth_id:
+        ensure_profile(
+            db,
+            auth_id=auth_id,
+            email=payload.email,
+            name=payload.name,
+            state=payload.state,
+            preferred_language=payload.preferred_language,
+        )
+
+    if supabase_auth.needs_confirmation(result):
+        return {
+            "confirmation_required": True,
+            "email": payload.email,
+            "message": (
+                "Almost there. We've sent a confirmation link to "
+                f"{payload.email} — click it, then log in."
+            ),
+        }
+
+    # Confirmation is switched off in the Supabase dashboard: log them in.
+    session = await supabase_auth.sign_in(payload.email, payload.password)
+    user = db.query(models.User).filter(models.User.email == payload.email).first()
+    return {
+        "confirmation_required": False,
+        "access_token": session["access_token"],
+        "token_type": "bearer",
+        "user": schemas.UserOut.model_validate(user),
+    }
+
+
+@app.post("/auth/resend-confirmation")
+async def resend_confirmation(payload: schemas.EmailOnly):
+    try:
+        await supabase_auth.resend_confirmation(payload.email)
+    except supabase_auth.AuthError as exc:
+        raise HTTPException(status_code=exc.status, detail=str(exc))
+    return {"message": "If that address is registered, we've sent the link again."}
+
+
+@app.post("/auth/forgot-password")
+async def forgot_password(payload: schemas.EmailOnly):
+    """Always reports success - confirming which addresses exist would let
+    anyone enumerate the user list."""
+    await supabase_auth.send_password_reset(
+        payload.email, redirect_to=f"{settings.site_url}/login"
+    )
+    return {"message": "If that address is registered, a reset link is on its way."}
 
 
 @app.post("/auth/login", response_model=schemas.TokenOut)
-def login(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)):
+async def login(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)):
     # OAuth2PasswordRequestForm uses "username" as the field name; we treat it as email.
-    user = db.query(models.User).filter(models.User.email == form_data.username).first()
-    if not user or not verify_password(form_data.password, user.hashed_password):
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Incorrect email or password.",
-        )
-    token = create_access_token(subject=user.email)
-    return schemas.TokenOut(access_token=token, user=schemas.UserOut.model_validate(user))
+    try:
+        session = await supabase_auth.sign_in(form_data.username, form_data.password)
+    except supabase_auth.AuthError as exc:
+        raise HTTPException(status_code=exc.status, detail=str(exc))
+
+    supa_user = session.get("user") or {}
+    meta = supa_user.get("user_metadata") or {}
+
+    user = ensure_profile(
+        db,
+        auth_id=supa_user.get("id"),
+        email=supa_user.get("email") or form_data.username,
+        name=meta.get("name"),
+        state=meta.get("state"),
+        preferred_language=meta.get("preferred_language", "en"),
+    )
+
+    return schemas.TokenOut(
+        access_token=session["access_token"],
+        user=schemas.UserOut.model_validate(user),
+    )
 
 
 @app.get("/auth/me", response_model=schemas.UserOut)

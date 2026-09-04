@@ -18,9 +18,17 @@ class User(Base):
     __tablename__ = "users"
 
     id = Column(Integer, primary_key=True, index=True)
+
+    # Links this profile row to Supabase Auth (auth.users.id, a UUID).
+    # Nullable so rows that predate the switch can be back-filled on login.
+    auth_id = Column(String, unique=True, index=True, nullable=True)
+
     name = Column(String, nullable=False)
     email = Column(String, unique=True, index=True, nullable=False)
-    hashed_password = Column(String, nullable=False)
+
+    # Supabase Auth owns passwords now. Kept nullable so the old hashes stay
+    # readable during migration; nothing in the app reads this any more.
+    hashed_password = Column(String, nullable=True)
     preferred_language = Column(String, default="en")
     state = Column(String, nullable=True)
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
