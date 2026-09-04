@@ -60,3 +60,34 @@ export async function fetchHistory(token) {
   });
   return handle(res);
 }
+
+export async function fetchDraftTypes(token) {
+  const res = await fetch(`${BASE_URL}/draft/types`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  return handle(res);
+}
+
+export async function createDraft(token, { doc_type, instructions, details }) {
+  const res = await fetch(`${BASE_URL}/draft`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify({ doc_type, instructions, details }),
+  });
+  return handle(res);
+}
+
+export async function reviewDocument(token, { document_text, document_id, doc_type, context }) {
+  const res = await fetch(`${BASE_URL}/review`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify({ document_text, document_id, doc_type, context }),
+  });
+  return handle(res);
+}
