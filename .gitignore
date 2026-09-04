@@ -6,6 +6,4 @@ __pycache__/
 .env
 *.db
 backend/.env
-backend/.venv/
 backend/venv/
-backend/.venv/
