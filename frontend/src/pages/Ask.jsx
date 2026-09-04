@@ -4,15 +4,61 @@ import { useAuth } from '../AuthContext';
 import {
   askQuestion,
   createDraft,
+  deleteConversation,
+  fetchConversation,
+  fetchConversations,
   fetchDraftTypes,
-  fetchHistory,
   reviewDocument,
 } from '../api';
 
+/* Inline SVG icons. Emoji render differently on every OS and read as
+   decoration rather than interface, so these are stroked line icons. */
+const Icon = {
+  ask: (
+    <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.6"
+         strokeLinecap="round" strokeLinejoin="round">
+      <path d="M17 11.5a2 2 0 0 1-2 2H8l-4 3v-3H5a2 2 0 0 1-2-2v-6a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z" />
+    </svg>
+  ),
+  draft: (
+    <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.6"
+         strokeLinecap="round" strokeLinejoin="round">
+      <path d="M4 2.5h7l5 5v10H4z" />
+      <path d="M11 2.5v5h5" />
+      <path d="M7 11h6M7 14h4" />
+    </svg>
+  ),
+  review: (
+    <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.6"
+         strokeLinecap="round" strokeLinejoin="round">
+      <path d="M4 2.5h9l3 3v12H4z" />
+      <path d="m7 10 2 2 4-4.5" />
+    </svg>
+  ),
+  menu: (
+    <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.7"
+         strokeLinecap="round">
+      <path d="M3 6h14M3 10h14M3 14h14" />
+    </svg>
+  ),
+  close: (
+    <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.7"
+         strokeLinecap="round">
+      <path d="M5 5l10 10M15 5L5 15" />
+    </svg>
+  ),
+  trash: (
+    <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.5"
+         strokeLinejoin="round">
+      <path d="M4 6h12M8 6V4h4v2M6 6l.7 10h6.6L15 6" />
+    </svg>
+  ),
+};
+
 const MODES = [
-  { id: 'ask', label: 'Ask', icon: '💬' },
-  { id: 'draft', label: 'Draft', icon: '📝' },
-  { id: 'review', label: 'Review', icon: '🔍' },
+  { id: 'ask', label: 'Ask', icon: Icon.ask },
+  { id: 'draft', label: 'Draft', icon: Icon.draft },
+  { id: 'review', label: 'Review', icon: Icon.review },
 ];
 
 const PLACEHOLDERS = {
@@ -47,6 +93,8 @@ const CHIPS = {
   review: [],
 };
 
+const STORAGE_KEY = 'ns_active_conversation';
+
 export default function Ask() {
   const { token, user, logout } = useAuth();
   const navigate = useNavigate();
@@ -54,35 +102,85 @@ export default function Ask() {
   const [input, setInput] = useState('');
   const [docType, setDocType] = useState('');
   const [types, setTypes] = useState([]);
-  const [result, setResult] = useState(null);
-  const [pendingPrompt, setPendingPrompt] = useState('');
+  const [turns, setTurns] = useState([]);
+  const [conversationId, setConversationId] = useState(null);
   const [history, setHistory] = useState([]);
+  // Visible by default, like ChatGPT. The choice is remembered.
+  const [sidebarOpen, setSidebarOpen] = useState(
+    () => localStorage.getItem('ns_sidebar') !== 'closed'
+  );
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
-  const [copied, setCopied] = useState(false);
+  const [copiedIdx, setCopiedIdx] = useState(null);
   const threadEndRef = useRef(null);
 
   useEffect(() => {
-    fetchHistory(token).then(setHistory).catch(() => {});
+    if (!token) return;
+    refreshHistory();
     fetchDraftTypes(token).then(setTypes).catch(() => {});
+
+    // Restore the last thread so a refresh doesn't wipe the screen.
+    const saved = localStorage.getItem(STORAGE_KEY);
+    if (saved) loadConversation(Number(saved));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [token]);
 
   useEffect(() => {
     threadEndRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
-  }, [result, loading]);
+  }, [turns, loading]);
 
-  const started = loading || !!result || !!error;
+  useEffect(() => {
+    localStorage.setItem('ns_sidebar', sidebarOpen ? 'open' : 'closed');
+  }, [sidebarOpen]);
+
+  function refreshHistory() {
+    fetchConversations(token).then(setHistory).catch(() => {});
+  }
+
+  async function loadConversation(id) {
+    try {
+      const data = await fetchConversation(token, id);
+      setConversationId(data.id);
+      setMode(data.mode || 'ask');
+      setTurns(
+        data.turns.map((t) => ({
+          kind: t.mode || 'ask',
+          prompt: t.question,
+          ...(t.payload || { title: t.answer_title, body: t.answer_body, citations: [], next_steps: [] }),
+        }))
+      );
+      localStorage.setItem(STORAGE_KEY, String(data.id));
+      setError('');
+    } catch {
+      localStorage.removeItem(STORAGE_KEY);   // thread was deleted
+    }
+  }
+
+  const started = loading || turns.length > 0 || !!error;
 
   function switchMode(next) {
     setMode(next);
-    setResult(null);
+    setTurns([]);
+    setConversationId(null);
     setError('');
+    localStorage.removeItem(STORAGE_KEY);
   }
 
   function startNew() {
     switchMode('ask');
     setInput('');
     setDocType('');
+  }
+
+  async function removeConversation(e, id) {
+    e.stopPropagation();
+    try {
+      await deleteConversation(token, id);
+      if (id === conversationId) startNew();
+      refreshHistory();
+    } catch {
+      setError('Could not delete that conversation.');
+    }
   }
 
   function handleLogout() {
@@ -92,35 +190,45 @@ export default function Ask() {
 
   async function handleSubmit(e) {
     e.preventDefault();
-    if (!input.trim()) return;
+    if (!input.trim() || loading) return;
     const prompt = input;
     setError('');
     setLoading(true);
-    setCopied(false);
-    setPendingPrompt(prompt);
     setInput('');
+    setTurns((t) => [...t, { kind: 'pending', prompt }]);
 
     try {
+      let turn;
       if (mode === 'ask') {
-        const data = await askQuestion(token, { question: prompt, state: user?.state });
-        setResult({ kind: 'ask', ...data, prompt });
-        setHistory(await fetchHistory(token));
+        const data = await askQuestion(token, {
+          question: prompt,
+          state: user?.state,
+          conversation_id: conversationId,
+        });
+        if (data.conversation_id) {
+          setConversationId(data.conversation_id);
+          localStorage.setItem(STORAGE_KEY, String(data.conversation_id));
+        }
+        turn = { kind: 'ask', ...data, prompt };
+        refreshHistory();
       } else if (mode === 'draft') {
         const data = await createDraft(token, {
           doc_type: docType || null,
           instructions: prompt,
           details: null,
         });
-        setResult({ kind: 'draft', ...data, prompt });
+        turn = { kind: 'draft', ...data, prompt };
       } else {
         const data = await reviewDocument(token, {
           document_text: prompt,
           doc_type: docType || null,
           context: null,
         });
-        setResult({ kind: 'review', ...data, prompt });
+        turn = { kind: 'review', ...data, prompt };
       }
+      setTurns((t) => [...t.slice(0, -1), turn]);
     } catch (err) {
+      setTurns((t) => t.slice(0, -1));
       setError(err.message);
       setInput(prompt);
     } finally {
@@ -128,11 +236,11 @@ export default function Ask() {
     }
   }
 
-  function copyDraft() {
-    if (!result?.body) return;
-    navigator.clipboard.writeText(result.body).then(() => {
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
+  function copyDraft(body, idx) {
+    if (!body) return;
+    navigator.clipboard.writeText(body).then(() => {
+      setCopiedIdx(idx);
+      setTimeout(() => setCopiedIdx(null), 2000);
     });
   }
 
@@ -161,9 +269,20 @@ export default function Ask() {
   return (
     <div className="ask-app">
       <header className="ask-topbar">
-        <Link to="/" className="logo">
-          <span className="mark">न्या</span> Nyaya Sathi
-        </Link>
+        <div className="ask-topbar-left">
+          <button
+            type="button"
+            className="sidebar-toggle"
+            onClick={() => setSidebarOpen((o) => !o)}
+            aria-label={sidebarOpen ? 'Close menu' : 'Open menu'}
+            aria-expanded={sidebarOpen}
+          >
+            {sidebarOpen ? Icon.close : Icon.menu}
+          </button>
+          <Link to="/" className="logo">
+            <span className="mark">न्या</span> Nyaya Sathi
+          </Link>
+        </div>
         <div className="ask-topbar-right">
           <span className="user-chip">
             <span className="avatar">{user?.name?.[0]?.toUpperCase() || 'U'}</span>
@@ -175,7 +294,7 @@ export default function Ask() {
 
       <main className="ask-shell">
       <div className="ask-layout">
-        <aside className="ask-sidebar">
+        <aside className={`ask-sidebar ${sidebarOpen ? '' : 'collapsed'}`}>
           <button type="button" className="new-chat-btn" onClick={startNew}>
             <span className="plus-ic">+</span> New question
           </button>
@@ -205,14 +324,19 @@ export default function Ask() {
             )}
             {history.map((h) => (
               <div
-                className="history-item"
+                className={`history-item ${h.id === conversationId ? 'active' : ''}`}
                 key={h.id}
-                onClick={() => {
-                  switchMode('ask');
-                  setInput(h.question);
-                }}
+                onClick={() => loadConversation(h.id)}
               >
-                {h.question}
+                <span className="history-item-text">{h.title}</span>
+                <button
+                  type="button"
+                  className="history-item-del"
+                  onClick={(e) => removeConversation(e, h.id)}
+                  aria-label="Delete conversation"
+                >
+                  {Icon.trash}
+                </button>
               </div>
             ))}
           </div>
@@ -233,21 +357,6 @@ export default function Ask() {
             <div className="ask-welcome">
               <h1>Welcome to Nyaya Sathi</h1>
               <p className="ask-welcome-sub">{WELCOME_SUB[mode]}</p>
-
-              <div className="ask-mode-pills" role="tablist">
-                {MODES.map((m) => (
-                  <button
-                    key={m.id}
-                    type="button"
-                    role="tab"
-                    aria-selected={mode === m.id}
-                    className={`mode-btn ${mode === m.id ? 'active' : ''}`}
-                    onClick={() => switchMode(m.id)}
-                  >
-                    {m.label}
-                  </button>
-                ))}
-              </div>
 
               <form className="ask-input-card" onSubmit={handleSubmit}>
                 {docSelect}
@@ -303,37 +412,31 @@ export default function Ask() {
             </div>
           ) : (
             <div className="ask-conversation">
-              <div className="mode-switch" role="tablist">
-                {MODES.map((m) => (
-                  <button
-                    key={m.id}
-                    type="button"
-                    role="tab"
-                    aria-selected={mode === m.id}
-                    className={`mode-btn ${mode === m.id ? 'active' : ''}`}
-                    onClick={() => switchMode(m.id)}
-                  >
-                    {m.label}
-                  </button>
-                ))}
-              </div>
-
               <div className="ask-thread">
-                <div className="ask-user-bubble">{pendingPrompt}</div>
+                {turns.map((t, i) => (
+                  <div className="ask-turn" key={i}>
+                    <div className="ask-user-bubble">{t.prompt}</div>
+                    {t.kind === 'pending' ? (
+                      <div className="ask-thinking">
+                        <span className="spinner" /> Thinking through this…
+                      </div>
+                    ) : (
+                      <>
+                        {t.kind === 'ask' && <AskResult data={t} />}
+                        {t.kind === 'draft' && (
+                          <DraftResult
+                            data={t}
+                            onCopy={() => copyDraft(t.body, i)}
+                            copied={copiedIdx === i}
+                          />
+                        )}
+                        {t.kind === 'review' && <ReviewResult data={t} />}
+                      </>
+                    )}
+                  </div>
+                ))}
 
                 {error && <div className="form-error">{error}</div>}
-
-                {loading && (
-                  <div className="ask-thinking">
-                    <span className="spinner" /> Thinking through this…
-                  </div>
-                )}
-
-                {result?.kind === 'ask' && <AskResult data={result} />}
-                {result?.kind === 'draft' && (
-                  <DraftResult data={result} onCopy={copyDraft} copied={copied} />
-                )}
-                {result?.kind === 'review' && <ReviewResult data={result} />}
                 <div ref={threadEndRef} />
               </div>
 
@@ -407,7 +510,7 @@ function AskResult({ data }) {
         <div className="status-chip live"><span className="dot" /> Answered live</div>
       </div>
       <h4 className="answer-title">{data.title}</h4>
-      {data.body.split(/\n{2,}/).map((p, i) => (
+      {(data.body || '').split(/\n{2,}/).map((p, i) => (
         <p className="answer-body" key={i}>{p}</p>
       ))}
       <Citations items={data.citations} />
@@ -475,7 +578,7 @@ function DraftResult({ data, onCopy, copied }) {
 }
 
 function ReviewResult({ data }) {
-  const counts = data.flags.reduce((a, f) => ({ ...a, [f.severity]: (a[f.severity] || 0) + 1 }), {});
+  const counts = (data.flags || []).reduce((a, f) => ({ ...a, [f.severity]: (a[f.severity] || 0) + 1 }), {});
   return (
     <div className="demo-card">
       <div className="demo-topbar">
@@ -499,7 +602,7 @@ function ReviewResult({ data }) {
         )}
       </div>
 
-      {data.flags.map((f, i) => (
+      {(data.flags || []).map((f, i) => (
         <div className={`flag sev-${f.severity}`} key={i}>
           <div className="flag-head">
             <span className={`flag-pill sev-${f.severity}`}>{f.severity}</span>

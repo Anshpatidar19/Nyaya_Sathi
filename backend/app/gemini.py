@@ -121,6 +121,10 @@ used_sources is correct and expected.
 abstract query, write directly to them, plainly and without alarm, and say what the \
 provision means for their situation.
 
+- If earlier turns are supplied, treat the new question as a continuation. \
+Resolve references like "he", "that", "the deposit" against what came before, \
+and do not repeat what you already explained - answer the new part.
+
 Return ONLY a JSON object with this exact shape:
 {
   "title": "a short direct answer, max 10 words, no trailing period",
@@ -130,8 +134,18 @@ Return ONLY a JSON object with this exact shape:
 }"""
 
 
-async def synthesize(question: str, state: Optional[str], sources: List[Dict[str, Any]]) -> Dict[str, Any]:
-    """Turn retrieved Kanoon material into a plain-language answer."""
+async def synthesize(
+    question: str,
+    state: Optional[str],
+    sources: List[Dict[str, Any]],
+    history: Optional[List[Dict[str, str]]] = None,
+) -> Dict[str, Any]:
+    """Turn retrieved material into a plain-language answer.
+
+    `history` carries earlier turns in the thread so follow-ups resolve -
+    "what about the deposit?" only means something next to the question
+    before it.
+    """
     blocks = []
     for i, s in enumerate(sources, start=1):
         blocks.append(
@@ -143,7 +157,23 @@ async def synthesize(question: str, state: Optional[str], sources: List[Dict[str
         )
 
     location = f"\nUser's state: {state}" if state else ""
+
+    prior = ""
+    if history:
+        turns = []
+        for h in history[-4:]:          # last few turns is plenty of context
+            turns.append(f"  User: {h.get('question','')}")
+            answer = (h.get("answer") or "")[:600]
+            if answer:
+                turns.append(f"  You: {answer}")
+        if turns:
+            prior = (
+                "EARLIER IN THIS CONVERSATION (for context - the new question "
+                "may refer back to it):\n" + "\n".join(turns) + "\n\n"
+            )
+
     prompt = (
+        f"{prior}"
         f"USER QUESTION: {question}{location}\n\n"
         f"RETRIEVED SOURCES FROM INDIAN KANOON:\n\n"
         + "\n\n".join(blocks)

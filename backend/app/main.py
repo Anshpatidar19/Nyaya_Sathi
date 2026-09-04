@@ -1,3 +1,4 @@
+import datetime
 import json
 import logging
 
@@ -175,25 +176,81 @@ def me(current_user: models.User = Depends(get_current_user)):
 
 # ---------------- Ask (core Q&A) ----------------
 
+HISTORY_TURNS = 4     # earlier turns fed back to the model
+
+
+def _thread_history(db: Session, conversation_id: int) -> list[dict]:
+    rows = (
+        db.query(models.QueryLog)
+        .filter(models.QueryLog.conversation_id == conversation_id)
+        .order_by(models.QueryLog.created_at.desc())
+        .limit(HISTORY_TURNS)
+        .all()
+    )
+    return [
+        {"question": r.question, "answer": r.answer_body or ""}
+        for r in reversed(rows)
+    ]
+
+
+def _get_or_create_conversation(
+    db: Session, user: models.User, conversation_id: int | None, first_question: str, mode: str
+) -> models.Conversation:
+    if conversation_id:
+        convo = (
+            db.query(models.Conversation)
+            .filter(
+                models.Conversation.id == conversation_id,
+                models.Conversation.user_id == user.id,   # ownership check
+            )
+            .first()
+        )
+        if convo:
+            return convo
+
+    convo = models.Conversation(
+        user_id=user.id,
+        title=first_question[:80],
+        mode=mode,
+    )
+    db.add(convo)
+    db.commit()
+    db.refresh(convo)
+    return convo
+
+
 @app.post("/ask", response_model=schemas.AskResponse)
 async def ask(
     payload: schemas.AskRequest,
     db: Session = Depends(get_db),
     current_user: models.User = Depends(get_current_user),
 ):
-    answer = await reasoning.answer_question(payload.question, payload.state or current_user.state)
+    convo = _get_or_create_conversation(
+        db, current_user, payload.conversation_id, payload.question, "ask"
+    )
+    history = _thread_history(db, convo.id) if payload.conversation_id else []
+
+    answer = await reasoning.answer_question(
+        payload.question, payload.state or current_user.state, history
+    )
 
     log = models.QueryLog(
         user_id=current_user.id,
+        conversation_id=convo.id,
+        mode="ask",
         question=payload.question,
         answer_title=answer.title,
         answer_body=answer.body,
         citations_json=json.dumps([c.model_dump() for c in answer.citations]),
+        payload_json=json.dumps(answer.model_dump(), default=str),
     )
     db.add(log)
+    convo.updated_at = datetime.datetime.utcnow()
     db.commit()
 
-    return answer
+    response = answer.model_dump()
+    response["conversation_id"] = convo.id
+    return response
 
 
 @app.get("/ask/history", response_model=list[schemas.QueryHistoryItem])
@@ -208,6 +265,87 @@ def ask_history(
         .limit(50)
         .all()
     )
+
+
+# ---------------- Conversations ----------------
+
+@app.get("/conversations", response_model=list[schemas.ConversationOut])
+def list_conversations(
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user),
+):
+    return (
+        db.query(models.Conversation)
+        .filter(models.Conversation.user_id == current_user.id)
+        .order_by(models.Conversation.updated_at.desc())
+        .limit(60)
+        .all()
+    )
+
+
+@app.get("/conversations/{conversation_id}", response_model=schemas.ConversationDetail)
+def get_conversation(
+    conversation_id: int,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user),
+):
+    """Full thread, with each turn's original payload so a refreshed page
+    renders the same citations and flags it showed live."""
+    convo = (
+        db.query(models.Conversation)
+        .filter(
+            models.Conversation.id == conversation_id,
+            models.Conversation.user_id == current_user.id,
+        )
+        .first()
+    )
+    if not convo:
+        raise HTTPException(status_code=404, detail="Conversation not found.")
+
+    turns = []
+    for t in convo.turns:
+        payload = None
+        if t.payload_json:
+            try:
+                payload = json.loads(t.payload_json)
+            except json.JSONDecodeError:
+                payload = None
+        turns.append(
+            schemas.TurnOut(
+                id=t.id,
+                mode=t.mode or "ask",
+                question=t.question,
+                answer_title=t.answer_title,
+                answer_body=t.answer_body,
+                payload=payload,
+                created_at=t.created_at,
+            )
+        )
+
+    return schemas.ConversationDetail(
+        id=convo.id, title=convo.title, mode=convo.mode,
+        created_at=convo.created_at, turns=turns,
+    )
+
+
+@app.delete("/conversations/{conversation_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_conversation(
+    conversation_id: int,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user),
+):
+    convo = (
+        db.query(models.Conversation)
+        .filter(
+            models.Conversation.id == conversation_id,
+            models.Conversation.user_id == current_user.id,
+        )
+        .first()
+    )
+    if not convo:
+        raise HTTPException(status_code=404, detail="Conversation not found.")
+    db.delete(convo)
+    db.commit()
 
 
 # ---------------- Documents ----------------

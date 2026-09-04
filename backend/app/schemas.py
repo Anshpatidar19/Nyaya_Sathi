@@ -49,9 +49,13 @@ class AskRequest(BaseModel):
     question: str = Field(min_length=3, max_length=1000)
     state: Optional[str] = None
     language: str = "en"
+    # Omit to start a new thread; pass an id to continue one.
+    conversation_id: Optional[int] = None
 
 
 class AskResponse(BaseModel):
+    # Returned so the client can continue the thread on the next question.
+    conversation_id: Optional[int] = None
     title: str
     body: str
     citations: List[Citation]
@@ -138,6 +142,33 @@ class ReviewResponse(BaseModel):
     missing_clauses: list[str] = []
     truncated: bool = False
 
-class EmailOnly(BaseModel):
-    """For resend-confirmation and forgot-password."""
-    email: EmailStr
+# ---------- Conversations ----------
+
+class ConversationOut(BaseModel):
+    id: int
+    title: str
+    mode: str
+    updated_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class TurnOut(BaseModel):
+    """One question/answer pair, with the full original payload so a
+    reloaded thread renders exactly as it did live."""
+    id: int
+    mode: str
+    question: str
+    answer_title: Optional[str] = None
+    answer_body: Optional[str] = None
+    payload: Optional[dict] = None
+    created_at: datetime
+
+
+class ConversationDetail(BaseModel):
+    id: int
+    title: str
+    mode: str
+    created_at: datetime
+    turns: list[TurnOut] = []
