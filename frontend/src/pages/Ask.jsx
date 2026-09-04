@@ -363,7 +363,7 @@ export default function Ask() {
                 {mode === 'review' ? (
                   <textarea
                     className="ask-input-textarea"
-                    rows={5}
+                    rows={3}
                     value={input}
                     onChange={(e) => setInput(e.target.value)}
                     placeholder={PLACEHOLDERS.review}
