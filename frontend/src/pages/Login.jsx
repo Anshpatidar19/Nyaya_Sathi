@@ -45,7 +45,10 @@ export default function Login() {
             />
           </div>
           <div className="field">
-            <label htmlFor="password">Password</label>
+            <div className="field-label-row">
+              <label htmlFor="password">Password</label>
+              <Link to="/forgot" className="field-link">Forgot password?</Link>
+            </div>
             <input
               id="password"
               type="password"

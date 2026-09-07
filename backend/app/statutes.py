@@ -336,7 +336,15 @@ def _normalize(row: Dict[str, Any], act_key: str) -> Optional[Dict[str, Any]]:
         "title": title,
         "text": body,
         "url": url,
-        "_tokens": _tokenize(f"{title} {title} {body}"),  # title weighted 2x
+        # Context-aware chunk. The chapter heading is what lets "fundamental
+        # rights" find Article 21, which contains neither word. The act name
+        # adds almost nothing on its own - it appears in every section of the
+        # act, so BM25's IDF discards it - but it costs nothing and helps
+        # cross-act queries. Title is weighted 4x: measured best on the eval.
+        "_tokens": _tokenize(
+            f"{meta['short']} {row.get('chapter_title') or ''} "
+            f"{title} {title} {title} {title} {body}"
+        ),
     }
 
 
@@ -461,6 +469,33 @@ _OVERVIEWS: Dict[str, Dict[str, str]] = {
 
 _ACT_ALIASES = {
     "constitution": "coi",
+    "contract act": "contract",
+    "indian contract act": "contract",
+    "transfer of property act": "tpa",
+    "transfer of property": "tpa",
+    "tp act": "tpa",
+    "tpa": "tpa",
+    "ni act": "nia",
+    "rti act": "rti",
+    "rti": "rti",
+    "right to information act": "rti",
+    "consumer protection act": "cpa",
+    "cpa": "cpa",
+    "specific relief act": "specific_relief",
+    "limitation act": "limitation",
+    "arbitration act": "arbitration",
+    "arbitration and conciliation act": "arbitration",
+    "it act": "ita",
+    "information technology act": "ita",
+    "evidence act": "iea",
+    "indian evidence act": "iea",
+    "bsa": "iea",
+    "civil procedure code": "cpc",
+    "code of civil procedure": "cpc",
+    "criminal procedure code": "crpc",
+    "code of criminal procedure": "crpc",
+    "hindu marriage act": "hma",
+    "motor vehicles act": "mva",
     "constitution of india": "coi",
     "indian constitution": "coi",
     "bharatiya nyaya sanhita": "bns",
@@ -492,16 +527,64 @@ def act_overview(query: str) -> Optional[Dict[str, str]]:
 
 # --- direct citation lookup, e.g. "BNS 85", "section 318 of BNS" ----------
 
+# Short act tokens that can appear on either side of the number.
+_ACT_TOKENS = (
+    r"bns|bnss|bsa|ipc|crpc|cpc|iea|nia|hma|mva|coi|cpa|rti|tpa|ita"
+)
+
+# Longer act names, only ever written after the number ("section 138 of the
+# Negotiable Instruments Act"). Ordered longest-first so "indian contract act"
+# wins over "contract act".
+_ACT_NAMES = (
+    r"bharatiya nyaya sanhita|nyaya sanhita|"
+    r"bharatiya nagarik suraksha sanhita|nagarik suraksha sanhita|"
+    r"bharatiya sakshya adhiniyam|sakshya adhiniyam|"
+    r"constitution of india|indian constitution|constitution|"
+    r"indian penal code|penal code|"
+    r"code of criminal procedure|criminal procedure code|"
+    r"code of civil procedure|civil procedure code|"
+    r"indian evidence act|evidence act|"
+    r"negotiable instruments? act|ni act|"
+    r"indian contract act|contract act|"
+    r"transfer of property act|transfer of property|tp act|"
+    r"right to information act|rti act|"
+    r"consumer protection act|"
+    r"specific relief act|limitation act|"
+    r"arbitration and conciliation act|arbitration act|"
+    r"information technology act|it act|"
+    r"hindu marriage act|motor vehicles act"
+)
+
 _CITE_RE = re.compile(
-    r"(?:(?P<act1>bns|ipc|crpc|bnss|cpc|iea|nia|hma|mva|coi|constitution)\s*)?"
+    rf"(?:(?P<act1>{_ACT_TOKENS})\s*)?"
     r"(?P<unit>article|art\.?|section|sec\.?|s\.?|u/s)?\s*"
     r"(?P<num>\d{1,3}[a-z]{0,2})"
-    r"(?:\s*(?:of\s+(?:the\s+)?)?(?P<act2>bns|ipc|crpc|bnss|cpc|iea|nia|hma|mva|coi|"
-    r"bharatiya nyaya sanhita|nyaya sanhita|indian penal code|penal code|"
-    r"constitution of india|indian constitution|constitution|"
-    r"negotiable instruments? act))?",
+    rf"(?:\s*(?:of\s+(?:the\s+)?)?(?P<act2>{_ACT_TOKENS}|{_ACT_NAMES}))?",
     re.IGNORECASE,
 )
+
+# Reported case citations - "AIR 1973 SC 1461", "(2017) 10 SCC 1",
+# "2019 SCC OnLine SC 1005". Not looked up locally (we have no judgment
+# corpus), but recognising them means the query can be routed straight to
+# Kanoon instead of being tokenised into meaningless numbers.
+_CASE_CITE_RE = re.compile(
+    # Lookbehind, not \b: a citation can open with "(", and \b requires a
+    # word character to sit against, so "\b(2017) 10 SCC 1" never matched.
+    r"(?<![A-Za-z0-9])(?:AIR\s+\d{4}\s+[A-Z]{2,4}\s+\d+"
+    r"|\(\d{4}\)\s*\d+\s*SCC\s*(?:OnLine\s*[A-Z]{2,4}\s*)?\d+"
+    r"|\d{4}\s+SCC\s+OnLine\s+[A-Z]{2,4}\s+\d+"
+    r"|\(\d{4}\)\s*\d+\s*[A-Z]{2,5}\s*\d+)\b",
+    re.IGNORECASE,
+)
+
+
+def case_citations(query: str) -> List[str]:
+    """Reported citations named in the query, e.g. ['AIR 1973 SC 1461'].
+
+    A query naming a specific judgment should go to case-law search, not to
+    BM25 over statute text - the numbers in a citation are noise there.
+    """
+    return [m.group(0).strip() for m in _CASE_CITE_RE.finditer(query or "")]
 
 # "give me the preamble of the constitution"
 _PREAMBLE_RE = re.compile(r"\bpreamble\b", re.IGNORECASE)
@@ -547,6 +630,32 @@ def lookup_section(query: str) -> List[Dict[str, Any]]:
 
 # --- BM25 keyword search --------------------------------------------------
 
+# Ranking weights. Exposed as module state so eval_retrieval --sweep can tune
+# them against the question set instead of anyone guessing.
+#
+# PRIORITY_STEP  - how much each step down the ACTS priority ladder costs.
+#                  Constitutional articles are broad and would otherwise crowd
+#                  out the specific provision that actually governs.
+# REPEALED_MULT  - what a repealed act's sections are multiplied by. This is a
+#                  legal judgement, not a tuning knob: the CrPC was repealed in
+#                  2024, so a CrPC section should almost never outrank a live
+#                  BNS one. It is still retrievable - someone asking about an
+#                  old case needs it - just not first.
+# Measured on the question set with `--sweep`, not chosen by intuition.
+# PRIORITY_STEP at 0 was strictly better: the priority ladder was demoting
+# constitutional articles that were the correct answer. The repeal penalty
+# does earn its keep - repealed CrPC sections were outranking live BNS ones.
+PRIORITY_STEP = 0.0
+REPEALED_MULT = 0.7
+
+
+def _rank_weight(doc: Dict[str, Any]) -> float:
+    w = 1.0 - PRIORITY_STEP * doc.get("priority", 0)
+    if not doc.get("current", True):
+        w *= REPEALED_MULT
+    return max(w, 0.05)
+
+
 def _bm25(query: str, docs: List[Dict[str, Any]], limit: int) -> List[Dict[str, Any]]:
     idx = _index()
     terms = _expand(query)
@@ -573,8 +682,7 @@ def _bm25(query: str, docs: List[Dict[str, Any]], limit: int) -> List[Dict[str, 
                 continue
             score += idf[t] * (f * (_K1 + 1)) / (f + _K1 * (1 - _B + _B * dl / avg_len))
         if score > 0:
-            # Nudge current law ahead of repealed law at similar relevance.
-            score *= 1.0 - 0.08 * d["priority"]
+            score *= _rank_weight(d)
             scored.append((score, d))
 
     scored.sort(key=lambda x: x[0], reverse=True)
@@ -654,6 +762,17 @@ def as_source(doc: Dict[str, Any]) -> Dict[str, Any]:
 
     return {
         "docid": None,
+        # Identity fields have to survive the conversion. Without them the
+        # validity layer can't tell a statute from a judgment, so every
+        # statute-backed answer was being reported as ungrounded and no
+        # repeal badge could ever be computed.
+        "act_key": doc["act_key"],
+        "act_short": doc["act_short"],
+        "act": doc.get("act"),
+        "section": doc["section"],
+        "current": doc["current"],
+        "superseded_by": doc.get("superseded_by"),
+        "kind": "section",
         "title": f"{doc['act_short']} {label}",
         "court": "Bare Act" + ("" if doc["current"] else " (repealed)"),
         "date": None,
@@ -669,6 +788,10 @@ def as_source(doc: Dict[str, Any]) -> Dict[str, Any]:
 def overview_as_source(ov: Dict[str, str]) -> Dict[str, Any]:
     return {
         "docid": None,
+        # Marks this as statute material rather than case law. The grounding
+        # assessment counts bare-act sources, and without this an act overview
+        # looked like an answer with no statutory basis at all.
+        "kind": "overview",
         "title": ov["title"],
         "court": "Bare Act — overview",
         "date": None,

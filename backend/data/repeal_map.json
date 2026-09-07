@@ -1,0 +1,519 @@
+{
+  "_readme": [
+    "Section-level successor mapping for repealed law.",
+    "",
+    "Act-level repeal already lives in statutes.ACTS ('current': false plus a",
+    "'superseded_by' note). That is curated and safe. THIS file is the finer",
+    "grained claim: 'IPC 302 became BNS 103'. Getting one of those wrong would",
+    "send an advocate to the wrong provision with a confident badge attached,",
+    "which is worse than saying nothing.",
+    "",
+    "So it ships empty. Fill it from the actual statute - the BNS, BNSS and",
+    "BSA each carry a repeal-and-savings section, and India Code publishes",
+    "concordance tables. Do not fill it from memory, and do not fill it from",
+    "an LLM.",
+    "",
+    "Format:",
+    "  \"<old_act_key>:<SECTION>\": {",
+    "    \"act\": \"Bharatiya Nyaya Sanhita, 2023\",",
+    "    \"act_short\": \"BNS\",",
+    "    \"act_key\": \"bns\",",
+    "    \"section\": \"103\",",
+    "    \"verified\": true,",
+    "    \"source\": \"where you checked it\"",
+    "  }",
+    "",
+    "Section keys are uppercased, so use 304B not 304b.",
+    "",
+    "'verified': false still displays, but with a caveat telling the reader to",
+    "check it. Use that while you are working through the list rather than",
+    "leaving an entry out entirely.",
+    "",
+    "Anything absent falls back to the act-level notice, which is always safe:",
+    "'the IPC has been repealed by the BNS' is true regardless of which",
+    "section the reader asked about.",
+    "",
+    "Run `python -m app.eval_validity` after editing to check the file parses",
+    "and that no mapping points at a section that does not exist in the index."
+  ],
+  "ipc:34": {
+    "act": "Bharatiya Nyaya Sanhita, 2023",
+    "act_short": "BNS",
+    "act_key": "bns",
+    "section": "3(5)",
+    "verified": true,
+    "source": "NCRB, Corresponding Section Table of Bharatiya Nyaya Sanhita, 2023 (BNS) — https://cytrain.ncrb.gov.in/staticpage/web_pages/SectionTableBNS.html"
+  },
+  "ipc:120A": {
+    "act": "Bharatiya Nyaya Sanhita, 2023",
+    "act_short": "BNS",
+    "act_key": "bns",
+    "section": "61",
+    "verified": true,
+    "source": "NCRB, Corresponding Section Table of Bharatiya Nyaya Sanhita, 2023 (BNS) — https://cytrain.ncrb.gov.in/staticpage/web_pages/SectionTableBNS.html"
+  },
+  "ipc:120B": {
+    "act": "Bharatiya Nyaya Sanhita, 2023",
+    "act_short": "BNS",
+    "act_key": "bns",
+    "section": "61",
+    "verified": true,
+    "source": "NCRB, Corresponding Section Table of Bharatiya Nyaya Sanhita, 2023 (BNS) — https://cytrain.ncrb.gov.in/staticpage/web_pages/SectionTableBNS.html"
+  },
+  "ipc:124A": {
+    "act": "Bharatiya Nyaya Sanhita, 2023",
+    "act_short": "BNS",
+    "act_key": "bns",
+    "section": "152",
+    "verified": true,
+    "source": "NCRB, Corresponding Section Table of Bharatiya Nyaya Sanhita, 2023 (BNS) — https://cytrain.ncrb.gov.in/staticpage/web_pages/SectionTableBNS.html"
+  },
+  "ipc:149": {
+    "act": "Bharatiya Nyaya Sanhita, 2023",
+    "act_short": "BNS",
+    "act_key": "bns",
+    "section": "190",
+    "verified": true,
+    "source": "NCRB, Corresponding Section Table of Bharatiya Nyaya Sanhita, 2023 (BNS) — https://cytrain.ncrb.gov.in/staticpage/web_pages/SectionTableBNS.html"
+  },
+  "ipc:299": {
+    "act": "Bharatiya Nyaya Sanhita, 2023",
+    "act_short": "BNS",
+    "act_key": "bns",
+    "section": "100",
+    "verified": true,
+    "source": "NCRB, Corresponding Section Table of Bharatiya Nyaya Sanhita, 2023 (BNS) — https://cytrain.ncrb.gov.in/staticpage/web_pages/SectionTableBNS.html"
+  },
+  "ipc:300": {
+    "act": "Bharatiya Nyaya Sanhita, 2023",
+    "act_short": "BNS",
+    "act_key": "bns",
+    "section": "101",
+    "verified": true,
+    "source": "NCRB, Corresponding Section Table of Bharatiya Nyaya Sanhita, 2023 (BNS) — https://cytrain.ncrb.gov.in/staticpage/web_pages/SectionTableBNS.html"
+  },
+  "ipc:302": {
+    "act": "Bharatiya Nyaya Sanhita, 2023",
+    "act_short": "BNS",
+    "act_key": "bns",
+    "section": "103",
+    "verified": true,
+    "source": "NCRB, Corresponding Section Table of Bharatiya Nyaya Sanhita, 2023 (BNS) — https://cytrain.ncrb.gov.in/staticpage/web_pages/SectionTableBNS.html"
+  },
+  "ipc:303": {
+    "act": "Bharatiya Nyaya Sanhita, 2023",
+    "act_short": "BNS",
+    "act_key": "bns",
+    "section": "104",
+    "verified": true,
+    "source": "NCRB, Corresponding Section Table of Bharatiya Nyaya Sanhita, 2023 (BNS) — https://cytrain.ncrb.gov.in/staticpage/web_pages/SectionTableBNS.html"
+  },
+  "ipc:304": {
+    "act": "Bharatiya Nyaya Sanhita, 2023",
+    "act_short": "BNS",
+    "act_key": "bns",
+    "section": "105",
+    "verified": true,
+    "source": "NCRB, Corresponding Section Table of Bharatiya Nyaya Sanhita, 2023 (BNS) — https://cytrain.ncrb.gov.in/staticpage/web_pages/SectionTableBNS.html"
+  },
+  "ipc:304A": {
+    "act": "Bharatiya Nyaya Sanhita, 2023",
+    "act_short": "BNS",
+    "act_key": "bns",
+    "section": "106",
+    "verified": true,
+    "source": "NCRB, Corresponding Section Table of Bharatiya Nyaya Sanhita, 2023 (BNS) — https://cytrain.ncrb.gov.in/staticpage/web_pages/SectionTableBNS.html"
+  },
+  "ipc:304B": {
+    "act": "Bharatiya Nyaya Sanhita, 2023",
+    "act_short": "BNS",
+    "act_key": "bns",
+    "section": "80",
+    "verified": true,
+    "source": "NCRB, Corresponding Section Table of Bharatiya Nyaya Sanhita, 2023 (BNS) — https://cytrain.ncrb.gov.in/staticpage/web_pages/SectionTableBNS.html"
+  },
+  "ipc:319": {
+    "act": "Bharatiya Nyaya Sanhita, 2023",
+    "act_short": "BNS",
+    "act_key": "bns",
+    "section": "114",
+    "verified": true,
+    "source": "NCRB, Corresponding Section Table of Bharatiya Nyaya Sanhita, 2023 (BNS) — https://cytrain.ncrb.gov.in/staticpage/web_pages/SectionTableBNS.html"
+  },
+  "ipc:320": {
+    "act": "Bharatiya Nyaya Sanhita, 2023",
+    "act_short": "BNS",
+    "act_key": "bns",
+    "section": "116",
+    "verified": true,
+    "source": "NCRB, Corresponding Section Table of Bharatiya Nyaya Sanhita, 2023 (BNS) — https://cytrain.ncrb.gov.in/staticpage/web_pages/SectionTableBNS.html"
+  },
+  "ipc:321": {
+    "act": "Bharatiya Nyaya Sanhita, 2023",
+    "act_short": "BNS",
+    "act_key": "bns",
+    "section": "115",
+    "verified": true,
+    "source": "NCRB, Corresponding Section Table of Bharatiya Nyaya Sanhita, 2023 (BNS) — https://cytrain.ncrb.gov.in/staticpage/web_pages/SectionTableBNS.html"
+  },
+  "ipc:322": {
+    "act": "Bharatiya Nyaya Sanhita, 2023",
+    "act_short": "BNS",
+    "act_key": "bns",
+    "section": "117",
+    "verified": true,
+    "source": "NCRB, Corresponding Section Table of Bharatiya Nyaya Sanhita, 2023 (BNS) — https://cytrain.ncrb.gov.in/staticpage/web_pages/SectionTableBNS.html"
+  },
+  "ipc:323": {
+    "act": "Bharatiya Nyaya Sanhita, 2023",
+    "act_short": "BNS",
+    "act_key": "bns",
+    "section": "115",
+    "verified": true,
+    "source": "NCRB, Corresponding Section Table of Bharatiya Nyaya Sanhita, 2023 (BNS) — https://cytrain.ncrb.gov.in/staticpage/web_pages/SectionTableBNS.html"
+  },
+  "ipc:324": {
+    "act": "Bharatiya Nyaya Sanhita, 2023",
+    "act_short": "BNS",
+    "act_key": "bns",
+    "section": "118",
+    "verified": true,
+    "source": "NCRB, Corresponding Section Table of Bharatiya Nyaya Sanhita, 2023 (BNS) — https://cytrain.ncrb.gov.in/staticpage/web_pages/SectionTableBNS.html"
+  },
+  "ipc:325": {
+    "act": "Bharatiya Nyaya Sanhita, 2023",
+    "act_short": "BNS",
+    "act_key": "bns",
+    "section": "117",
+    "verified": true,
+    "source": "NCRB, Corresponding Section Table of Bharatiya Nyaya Sanhita, 2023 (BNS) — https://cytrain.ncrb.gov.in/staticpage/web_pages/SectionTableBNS.html"
+  },
+  "ipc:326": {
+    "act": "Bharatiya Nyaya Sanhita, 2023",
+    "act_short": "BNS",
+    "act_key": "bns",
+    "section": "118",
+    "verified": true,
+    "source": "NCRB, Corresponding Section Table of Bharatiya Nyaya Sanhita, 2023 (BNS) — https://cytrain.ncrb.gov.in/staticpage/web_pages/SectionTableBNS.html"
+  },
+  "ipc:354": {
+    "act": "Bharatiya Nyaya Sanhita, 2023",
+    "act_short": "BNS",
+    "act_key": "bns",
+    "section": "74",
+    "verified": true,
+    "source": "NCRB, Corresponding Section Table of Bharatiya Nyaya Sanhita, 2023 (BNS) — https://cytrain.ncrb.gov.in/staticpage/web_pages/SectionTableBNS.html"
+  },
+  "ipc:354A": {
+    "act": "Bharatiya Nyaya Sanhita, 2023",
+    "act_short": "BNS",
+    "act_key": "bns",
+    "section": "75",
+    "verified": true,
+    "source": "NCRB, Corresponding Section Table of Bharatiya Nyaya Sanhita, 2023 (BNS) — https://cytrain.ncrb.gov.in/staticpage/web_pages/SectionTableBNS.html"
+  },
+  "ipc:354B": {
+    "act": "Bharatiya Nyaya Sanhita, 2023",
+    "act_short": "BNS",
+    "act_key": "bns",
+    "section": "76",
+    "verified": true,
+    "source": "NCRB, Corresponding Section Table of Bharatiya Nyaya Sanhita, 2023 (BNS) — https://cytrain.ncrb.gov.in/staticpage/web_pages/SectionTableBNS.html"
+  },
+  "ipc:354C": {
+    "act": "Bharatiya Nyaya Sanhita, 2023",
+    "act_short": "BNS",
+    "act_key": "bns",
+    "section": "77",
+    "verified": true,
+    "source": "NCRB, Corresponding Section Table of Bharatiya Nyaya Sanhita, 2023 (BNS) — https://cytrain.ncrb.gov.in/staticpage/web_pages/SectionTableBNS.html"
+  },
+  "ipc:354D": {
+    "act": "Bharatiya Nyaya Sanhita, 2023",
+    "act_short": "BNS",
+    "act_key": "bns",
+    "section": "78",
+    "verified": true,
+    "source": "NCRB, Corresponding Section Table of Bharatiya Nyaya Sanhita, 2023 (BNS) — https://cytrain.ncrb.gov.in/staticpage/web_pages/SectionTableBNS.html"
+  },
+  "ipc:359": {
+    "act": "Bharatiya Nyaya Sanhita, 2023",
+    "act_short": "BNS",
+    "act_key": "bns",
+    "section": "137",
+    "verified": true,
+    "source": "NCRB, Corresponding Section Table of Bharatiya Nyaya Sanhita, 2023 (BNS) — https://cytrain.ncrb.gov.in/staticpage/web_pages/SectionTableBNS.html"
+  },
+  "ipc:360": {
+    "act": "Bharatiya Nyaya Sanhita, 2023",
+    "act_short": "BNS",
+    "act_key": "bns",
+    "section": "138",
+    "verified": true,
+    "source": "NCRB, Corresponding Section Table of Bharatiya Nyaya Sanhita, 2023 (BNS) — https://cytrain.ncrb.gov.in/staticpage/web_pages/SectionTableBNS.html"
+  },
+  "ipc:361": {
+    "act": "Bharatiya Nyaya Sanhita, 2023",
+    "act_short": "BNS",
+    "act_key": "bns",
+    "section": "137",
+    "verified": true,
+    "source": "NCRB, Corresponding Section Table of Bharatiya Nyaya Sanhita, 2023 (BNS) — https://cytrain.ncrb.gov.in/staticpage/web_pages/SectionTableBNS.html"
+  },
+  "ipc:362": {
+    "act": "Bharatiya Nyaya Sanhita, 2023",
+    "act_short": "BNS",
+    "act_key": "bns",
+    "section": "139",
+    "verified": true,
+    "source": "NCRB, Corresponding Section Table of Bharatiya Nyaya Sanhita, 2023 (BNS) — https://cytrain.ncrb.gov.in/staticpage/web_pages/SectionTableBNS.html"
+  },
+  "ipc:363": {
+    "act": "Bharatiya Nyaya Sanhita, 2023",
+    "act_short": "BNS",
+    "act_key": "bns",
+    "section": "137",
+    "verified": true,
+    "source": "NCRB, Corresponding Section Table of Bharatiya Nyaya Sanhita, 2023 (BNS) — https://cytrain.ncrb.gov.in/staticpage/web_pages/SectionTableBNS.html"
+  },
+  "ipc:363A": {
+    "act": "Bharatiya Nyaya Sanhita, 2023",
+    "act_short": "BNS",
+    "act_key": "bns",
+    "section": "140",
+    "verified": true,
+    "source": "NCRB, Corresponding Section Table of Bharatiya Nyaya Sanhita, 2023 (BNS) — https://cytrain.ncrb.gov.in/staticpage/web_pages/SectionTableBNS.html"
+  },
+  "ipc:364": {
+    "act": "Bharatiya Nyaya Sanhita, 2023",
+    "act_short": "BNS",
+    "act_key": "bns",
+    "section": "140",
+    "verified": true,
+    "source": "NCRB, Corresponding Section Table of Bharatiya Nyaya Sanhita, 2023 (BNS) — https://cytrain.ncrb.gov.in/staticpage/web_pages/SectionTableBNS.html"
+  },
+  "ipc:364A": {
+    "act": "Bharatiya Nyaya Sanhita, 2023",
+    "act_short": "BNS",
+    "act_key": "bns",
+    "section": "140",
+    "verified": true,
+    "source": "NCRB, Corresponding Section Table of Bharatiya Nyaya Sanhita, 2023 (BNS) — https://cytrain.ncrb.gov.in/staticpage/web_pages/SectionTableBNS.html"
+  },
+  "ipc:365": {
+    "act": "Bharatiya Nyaya Sanhita, 2023",
+    "act_short": "BNS",
+    "act_key": "bns",
+    "section": "140",
+    "verified": true,
+    "source": "NCRB, Corresponding Section Table of Bharatiya Nyaya Sanhita, 2023 (BNS) — https://cytrain.ncrb.gov.in/staticpage/web_pages/SectionTableBNS.html"
+  },
+  "ipc:366": {
+    "act": "Bharatiya Nyaya Sanhita, 2023",
+    "act_short": "BNS",
+    "act_key": "bns",
+    "section": "139",
+    "verified": true,
+    "source": "NCRB, Corresponding Section Table of Bharatiya Nyaya Sanhita, 2023 (BNS) — https://cytrain.ncrb.gov.in/staticpage/web_pages/SectionTableBNS.html"
+  },
+  "ipc:375": {
+    "act": "Bharatiya Nyaya Sanhita, 2023",
+    "act_short": "BNS",
+    "act_key": "bns",
+    "section": "63",
+    "verified": true,
+    "source": "NCRB, Corresponding Section Table of Bharatiya Nyaya Sanhita, 2023 (BNS) — https://cytrain.ncrb.gov.in/staticpage/web_pages/SectionTableBNS.html"
+  },
+  "ipc:376": {
+    "act": "Bharatiya Nyaya Sanhita, 2023",
+    "act_short": "BNS",
+    "act_key": "bns",
+    "section": "64",
+    "verified": true,
+    "source": "NCRB, Corresponding Section Table of Bharatiya Nyaya Sanhita, 2023 (BNS) — https://cytrain.ncrb.gov.in/staticpage/web_pages/SectionTableBNS.html"
+  },
+  "ipc:378": {
+    "act": "Bharatiya Nyaya Sanhita, 2023",
+    "act_short": "BNS",
+    "act_key": "bns",
+    "section": "303",
+    "verified": true,
+    "source": "NCRB, Corresponding Section Table of Bharatiya Nyaya Sanhita, 2023 (BNS) — https://cytrain.ncrb.gov.in/staticpage/web_pages/SectionTableBNS.html"
+  },
+  "ipc:379": {
+    "act": "Bharatiya Nyaya Sanhita, 2023",
+    "act_short": "BNS",
+    "act_key": "bns",
+    "section": "303",
+    "verified": true,
+    "source": "NCRB, Corresponding Section Table of Bharatiya Nyaya Sanhita, 2023 (BNS) — https://cytrain.ncrb.gov.in/staticpage/web_pages/SectionTableBNS.html"
+  },
+  "ipc:380": {
+    "act": "Bharatiya Nyaya Sanhita, 2023",
+    "act_short": "BNS",
+    "act_key": "bns",
+    "section": "305",
+    "verified": true,
+    "source": "NCRB, Corresponding Section Table of Bharatiya Nyaya Sanhita, 2023 (BNS) — https://cytrain.ncrb.gov.in/staticpage/web_pages/SectionTableBNS.html"
+  },
+  "ipc:381": {
+    "act": "Bharatiya Nyaya Sanhita, 2023",
+    "act_short": "BNS",
+    "act_key": "bns",
+    "section": "306",
+    "verified": true,
+    "source": "NCRB, Corresponding Section Table of Bharatiya Nyaya Sanhita, 2023 (BNS) — https://cytrain.ncrb.gov.in/staticpage/web_pages/SectionTableBNS.html"
+  },
+  "ipc:390": {
+    "act": "Bharatiya Nyaya Sanhita, 2023",
+    "act_short": "BNS",
+    "act_key": "bns",
+    "section": "309",
+    "verified": true,
+    "source": "NCRB, Corresponding Section Table of Bharatiya Nyaya Sanhita, 2023 (BNS) — https://cytrain.ncrb.gov.in/staticpage/web_pages/SectionTableBNS.html"
+  },
+  "ipc:391": {
+    "act": "Bharatiya Nyaya Sanhita, 2023",
+    "act_short": "BNS",
+    "act_key": "bns",
+    "section": "310",
+    "verified": true,
+    "source": "NCRB, Corresponding Section Table of Bharatiya Nyaya Sanhita, 2023 (BNS) — https://cytrain.ncrb.gov.in/staticpage/web_pages/SectionTableBNS.html"
+  },
+  "ipc:392": {
+    "act": "Bharatiya Nyaya Sanhita, 2023",
+    "act_short": "BNS",
+    "act_key": "bns",
+    "section": "309",
+    "verified": true,
+    "source": "NCRB, Corresponding Section Table of Bharatiya Nyaya Sanhita, 2023 (BNS) — https://cytrain.ncrb.gov.in/staticpage/web_pages/SectionTableBNS.html"
+  },
+  "ipc:393": {
+    "act": "Bharatiya Nyaya Sanhita, 2023",
+    "act_short": "BNS",
+    "act_key": "bns",
+    "section": "310",
+    "verified": true,
+    "source": "NCRB, Corresponding Section Table of Bharatiya Nyaya Sanhita, 2023 (BNS) — https://cytrain.ncrb.gov.in/staticpage/web_pages/SectionTableBNS.html"
+  },
+  "ipc:395": {
+    "act": "Bharatiya Nyaya Sanhita, 2023",
+    "act_short": "BNS",
+    "act_key": "bns",
+    "section": "310",
+    "verified": true,
+    "source": "NCRB, Corresponding Section Table of Bharatiya Nyaya Sanhita, 2023 (BNS) — https://cytrain.ncrb.gov.in/staticpage/web_pages/SectionTableBNS.html"
+  },
+  "ipc:396": {
+    "act": "Bharatiya Nyaya Sanhita, 2023",
+    "act_short": "BNS",
+    "act_key": "bns",
+    "section": "310",
+    "verified": true,
+    "source": "NCRB, Corresponding Section Table of Bharatiya Nyaya Sanhita, 2023 (BNS) — https://cytrain.ncrb.gov.in/staticpage/web_pages/SectionTableBNS.html"
+  },
+  "ipc:397": {
+    "act": "Bharatiya Nyaya Sanhita, 2023",
+    "act_short": "BNS",
+    "act_key": "bns",
+    "section": "311",
+    "verified": true,
+    "source": "NCRB, Corresponding Section Table of Bharatiya Nyaya Sanhita, 2023 (BNS) — https://cytrain.ncrb.gov.in/staticpage/web_pages/SectionTableBNS.html"
+  },
+  "ipc:398": {
+    "act": "Bharatiya Nyaya Sanhita, 2023",
+    "act_short": "BNS",
+    "act_key": "bns",
+    "section": "312",
+    "verified": true,
+    "source": "NCRB, Corresponding Section Table of Bharatiya Nyaya Sanhita, 2023 (BNS) — https://cytrain.ncrb.gov.in/staticpage/web_pages/SectionTableBNS.html"
+  },
+  "ipc:415": {
+    "act": "Bharatiya Nyaya Sanhita, 2023",
+    "act_short": "BNS",
+    "act_key": "bns",
+    "section": "318",
+    "verified": true,
+    "source": "NCRB, Corresponding Section Table of Bharatiya Nyaya Sanhita, 2023 (BNS) — https://cytrain.ncrb.gov.in/staticpage/web_pages/SectionTableBNS.html"
+  },
+  "ipc:417": {
+    "act": "Bharatiya Nyaya Sanhita, 2023",
+    "act_short": "BNS",
+    "act_key": "bns",
+    "section": "318",
+    "verified": true,
+    "source": "NCRB, Corresponding Section Table of Bharatiya Nyaya Sanhita, 2023 (BNS) — https://cytrain.ncrb.gov.in/staticpage/web_pages/SectionTableBNS.html"
+  },
+  "ipc:418": {
+    "act": "Bharatiya Nyaya Sanhita, 2023",
+    "act_short": "BNS",
+    "act_key": "bns",
+    "section": "318",
+    "verified": true,
+    "source": "NCRB, Corresponding Section Table of Bharatiya Nyaya Sanhita, 2023 (BNS) — https://cytrain.ncrb.gov.in/staticpage/web_pages/SectionTableBNS.html"
+  },
+  "ipc:419": {
+    "act": "Bharatiya Nyaya Sanhita, 2023",
+    "act_short": "BNS",
+    "act_key": "bns",
+    "section": "319",
+    "verified": true,
+    "source": "NCRB, Corresponding Section Table of Bharatiya Nyaya Sanhita, 2023 (BNS) — https://cytrain.ncrb.gov.in/staticpage/web_pages/SectionTableBNS.html"
+  },
+  "ipc:420": {
+    "act": "Bharatiya Nyaya Sanhita, 2023",
+    "act_short": "BNS",
+    "act_key": "bns",
+    "section": "318",
+    "verified": true,
+    "source": "NCRB, Corresponding Section Table of Bharatiya Nyaya Sanhita, 2023 (BNS) — https://cytrain.ncrb.gov.in/staticpage/web_pages/SectionTableBNS.html"
+  },
+  "ipc:499": {
+    "act": "Bharatiya Nyaya Sanhita, 2023",
+    "act_short": "BNS",
+    "act_key": "bns",
+    "section": "356",
+    "verified": true,
+    "source": "NCRB, Corresponding Section Table of Bharatiya Nyaya Sanhita, 2023 (BNS) — https://cytrain.ncrb.gov.in/staticpage/web_pages/SectionTableBNS.html"
+  },
+  "ipc:500": {
+    "act": "Bharatiya Nyaya Sanhita, 2023",
+    "act_short": "BNS",
+    "act_key": "bns",
+    "section": "356",
+    "verified": true,
+    "source": "NCRB, Corresponding Section Table of Bharatiya Nyaya Sanhita, 2023 (BNS) — https://cytrain.ncrb.gov.in/staticpage/web_pages/SectionTableBNS.html"
+  },
+  "ipc:503": {
+    "act": "Bharatiya Nyaya Sanhita, 2023",
+    "act_short": "BNS",
+    "act_key": "bns",
+    "section": "351",
+    "verified": true,
+    "source": "NCRB, Corresponding Section Table of Bharatiya Nyaya Sanhita, 2023 (BNS) — https://cytrain.ncrb.gov.in/staticpage/web_pages/SectionTableBNS.html"
+  },
+  "ipc:506": {
+    "act": "Bharatiya Nyaya Sanhita, 2023",
+    "act_short": "BNS",
+    "act_key": "bns",
+    "section": "351",
+    "verified": true,
+    "source": "NCRB, Corresponding Section Table of Bharatiya Nyaya Sanhita, 2023 (BNS) — https://cytrain.ncrb.gov.in/staticpage/web_pages/SectionTableBNS.html"
+  },
+  "ipc:507": {
+    "act": "Bharatiya Nyaya Sanhita, 2023",
+    "act_short": "BNS",
+    "act_key": "bns",
+    "section": "351",
+    "verified": true,
+    "source": "NCRB, Corresponding Section Table of Bharatiya Nyaya Sanhita, 2023 (BNS) — https://cytrain.ncrb.gov.in/staticpage/web_pages/SectionTableBNS.html"
+  },
+  "ipc:511": {
+    "act": "Bharatiya Nyaya Sanhita, 2023",
+    "act_short": "BNS",
+    "act_key": "bns",
+    "section": "62",
+    "verified": true,
+    "source": "NCRB, Corresponding Section Table of Bharatiya Nyaya Sanhita, 2023 (BNS) — https://cytrain.ncrb.gov.in/staticpage/web_pages/SectionTableBNS.html"
+  }
+}

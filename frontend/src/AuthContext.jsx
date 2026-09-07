@@ -48,8 +48,14 @@ export function AuthProvider({ children }) {
     setUser(null);
   }
 
+  // Everything role-dependent reads these two, so the check lives in one place.
+  const role = user?.role === 'advocate' ? 'advocate' : 'user';
+  const isAdvocate = role === 'advocate';
+
   return (
-    <AuthContext.Provider value={{ token, user, loading, login, register, logout }}>
+    <AuthContext.Provider
+      value={{ token, user, role, isAdvocate, loading, login, register, logout }}
+    >
       {children}
     </AuthContext.Provider>
   );

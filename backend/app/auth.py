@@ -23,6 +23,18 @@ CREDENTIALS_EXCEPTION = HTTPException(
     headers={"WWW-Authenticate": "Bearer"},
 )
 
+VALID_ROLES = {"user", "advocate"}
+
+
+def normalise_role(value: Optional[str]) -> str:
+    """Coerce anything unexpected to "user".
+
+    Accounts created before the role field existed have no role in their
+    Supabase metadata, so this is what keeps them rendering a sane sidebar
+    instead of an empty one.
+    """
+    return value if value in VALID_ROLES else "user"
+
 
 def ensure_profile(
     db: Session,
@@ -31,6 +43,7 @@ def ensure_profile(
     name: Optional[str] = None,
     state: Optional[str] = None,
     preferred_language: str = "en",
+    role: Optional[str] = None,
 ) -> models.User:
     """Find (or create, or back-fill) the local profile for a Supabase user.
 
@@ -42,11 +55,19 @@ def ensure_profile(
     """
     user = db.query(models.User).filter(models.User.auth_id == auth_id).first()
     if user:
+        # Back-fill for rows that predate the role column. An existing role is
+        # never overwritten - the account keeps whatever it signed up as.
+        if role and not user.role:
+            user.role = normalise_role(role)
+            db.commit()
+            db.refresh(user)
         return user
 
     user = db.query(models.User).filter(models.User.email == email).first()
     if user:
         user.auth_id = auth_id
+        if role and not user.role:
+            user.role = normalise_role(role)
         db.commit()
         db.refresh(user)
         return user
@@ -57,6 +78,7 @@ def ensure_profile(
         name=name or (email.split("@")[0] if email else "User"),
         state=state,
         preferred_language=preferred_language or "en",
+        role=normalise_role(role),
     )
     db.add(user)
     db.commit()
@@ -79,7 +101,24 @@ async def get_current_user(
         name=meta.get("name"),
         state=meta.get("state"),
         preferred_language=meta.get("preferred_language", "en"),
+        role=meta.get("role"),
     )
+
+
+def require_advocate(
+    current_user: models.User = Depends(get_current_user),
+) -> models.User:
+    """Gate for the advocate-only tools (draft, review).
+
+    The frontend already hides these, but a URL typed by hand shouldn't reach
+    them - a demo that leaks its own advocate tools stops looking finished.
+    """
+    if normalise_role(current_user.role) != "advocate":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="This tool is available on advocate accounts.",
+        )
+    return current_user
 
 
 # --- legacy helpers -------------------------------------------------------

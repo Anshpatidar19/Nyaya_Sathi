@@ -8,10 +8,46 @@ const STATES = [
   'Uttar Pradesh', 'West Bengal', 'Gujarat', 'Rajasthan', 'Telangana', 'Other',
 ];
 
+// Two account types. The choice decides which tools appear once you're in -
+// Draft and Review are advocate-only. Nothing here is verified.
+const ROLES = [
+  {
+    id: 'user',
+    label: 'User',
+    hint: 'Understand BNS, the Constitution, and Indian law in plain language',
+    icon: (
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6"
+           strokeLinecap="round" strokeLinejoin="round">
+        <circle cx="12" cy="8" r="3.5" />
+        <path d="M4.5 20a7.5 7.5 0 0 1 15 0" />
+      </svg>
+    ),
+  },
+  {
+    id: 'advocate',
+    label: 'Advocate',
+    hint: 'Research case law, draft documents, and red-line contracts',
+    icon: (
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6"
+           strokeLinecap="round" strokeLinejoin="round">
+        <path d="M12 3v18M5 21h14" />
+        <path d="M3 9l4-4 4 4M3 9a2 2 0 0 0 4 0 2 2 0 0 0 4 0" />
+        <path d="M13 9l4-4 4 4M13 9a2 2 0 0 0 4 0 2 2 0 0 0 4 0" />
+      </svg>
+    ),
+  },
+];
+
 export default function Register() {
   const { register } = useAuth();
   const navigate = useNavigate();
-  const [form, setForm] = useState({ name: '', email: '', password: '', state: 'Madhya Pradesh' });
+  const [form, setForm] = useState({
+    name: '',
+    email: '',
+    password: '',
+    state: 'Madhya Pradesh',
+    role: 'user',
+  });
   const [error, setError] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [sentTo, setSentTo] = useState('');
@@ -20,6 +56,8 @@ export default function Register() {
   function update(field, value) {
     setForm((f) => ({ ...f, [field]: value }));
   }
+
+  const selected = ROLES.find((r) => r.id === form.role);
 
   async function handleSubmit(e) {
     e.preventDefault();
@@ -78,6 +116,23 @@ export default function Register() {
         {error && <div className="form-error">{error}</div>}
 
         <form onSubmit={handleSubmit}>
+          <div className="role-picker" role="radiogroup" aria-label="Account type">
+            {ROLES.map((r) => (
+              <button
+                key={r.id}
+                type="button"
+                role="radio"
+                aria-checked={form.role === r.id}
+                className={`role-option ${form.role === r.id ? 'active' : ''}`}
+                onClick={() => update('role', r.id)}
+              >
+                <span className="role-icon">{r.icon}</span>
+                <span className="role-label">{r.label}</span>
+              </button>
+            ))}
+          </div>
+          <p className="role-hint">{selected?.hint}</p>
+
           <div className="field">
             <label htmlFor="name">Full name</label>
             <input id="name" required value={form.name} onChange={(e) => update('name', e.target.value)} placeholder="Ansh Sharma" />
@@ -97,7 +152,9 @@ export default function Register() {
             </select>
           </div>
           <button className="btn btn-primary btn-block" type="submit" disabled={submitting}>
-            {submitting ? <span className="spinner" /> : 'Create account'}
+            {submitting
+              ? <span className="spinner" />
+              : form.role === 'advocate' ? 'Create advocate account' : 'Create account'}
           </button>
         </form>
 

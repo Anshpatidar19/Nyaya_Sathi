@@ -1,5 +1,6 @@
 import { Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '../AuthContext';
+import ThemeToggle from './ThemeToggle';
 
 export default function Navbar() {
   const { user, logout } = useAuth();
@@ -23,6 +24,7 @@ export default function Navbar() {
           <Link to="/#faq">FAQ</Link>
         </div>
         <div className="navcta">
+          <ThemeToggle />
           {user ? (
             <>
               <Link to="/ask" className="btn btn-ghost">Ask a question</Link>
