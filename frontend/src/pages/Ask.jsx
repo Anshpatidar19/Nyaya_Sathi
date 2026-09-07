@@ -1,14 +1,21 @@
 import { useEffect, useRef, useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { useAuth } from '../AuthContext';
+import ThemeToggle from '../components/ThemeToggle';
+import ArgumentsResult from '../components/ArgumentsResult';
+import ArgumentsSetup from '../components/ArgumentsSetup';
+import DocTypeSelect from '../components/DocTypeSelect';
 import {
   askQuestion,
   createDraft,
   deleteConversation,
   fetchConversation,
   fetchConversations,
+  fetchArgumentSides,
   fetchDraftTypes,
+  generateArguments,
   reviewDocument,
+  uploadDocument,
 } from '../api';
 
 /* Inline SVG icons. Emoji render differently on every OS and read as
@@ -53,25 +60,83 @@ const Icon = {
       <path d="M4 6h12M8 6V4h4v2M6 6l.7 10h6.6L15 6" />
     </svg>
   ),
+  clip: (
+    <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.6"
+         strokeLinecap="round" strokeLinejoin="round">
+      <path d="M14.5 9.2l-5 5a3.1 3.1 0 0 1-4.4-4.4l6-6a2.1 2.1 0 0 1 3 3l-6 6a1.1 1.1 0 0 1-1.5-1.5l5.2-5.2" />
+    </svg>
+  ),
+  file: (
+    <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.6"
+         strokeLinecap="round" strokeLinejoin="round">
+      <path d="M5 2.5h6l4 4v11H5z" />
+      <path d="M11 2.5v4h4" />
+    </svg>
+  ),
+  argue: (
+    <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.6"
+         strokeLinecap="round" strokeLinejoin="round">
+      <path d="M10 3v14M5.5 17h9" />
+      <path d="M2.5 7.5l3-3.5 3 3.5a3 3 0 0 1-6 0z" />
+      <path d="M11.5 7.5l3-3.5 3 3.5a3 3 0 0 1-6 0z" />
+    </svg>
+  ),
+  matters: (
+    <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.6"
+         strokeLinecap="round" strokeLinejoin="round">
+      <path d="M2.5 6.5a1.5 1.5 0 0 1 1.5-1.5h3l1.5 2h6a1.5 1.5 0 0 1 1.5 1.5v6a1.5 1.5 0 0 1-1.5 1.5H4a1.5 1.5 0 0 1-1.5-1.5z" />
+    </svg>
+  ),
 };
 
-const MODES = [
+// Mirrors storage.ALLOWED_TYPES on the backend. Listing them here only
+// filters the OS picker - the server still rejects anything else.
+const ACCEPT =
+  '.pdf,.doc,.docx,.txt,.jpg,.jpeg,.png,.webp,' +
+  'application/pdf,application/msword,text/plain,' +
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document,' +
+  'image/jpeg,image/png,image/webp';
+
+const MAX_UPLOAD_BYTES = 10 * 1024 * 1024;
+
+const ALL_MODES = [
   { id: 'ask', label: 'Ask', icon: Icon.ask },
-  { id: 'draft', label: 'Draft', icon: Icon.draft },
-  { id: 'review', label: 'Review', icon: Icon.review },
+  { id: 'draft', label: 'Draft', icon: Icon.draft, advocateOnly: true },
+  { id: 'review', label: 'Review', icon: Icon.review, advocateOnly: true },
+  { id: 'argue', label: 'Arguments', icon: Icon.argue, advocateOnly: true },
+  // Not a mode - it navigates away to the matter workspace.
+  { id: 'matters', label: 'Matters', icon: Icon.matters, advocateOnly: true, route: '/matters' },
 ];
 
 const PLACEHOLDERS = {
   ask: 'Ask a legal question, e.g. "can my landlord evict me without notice?"',
   draft: 'Describe what you need, e.g. "Rakesh gave me a cheque for 85,000 that bounced on 12 August 2026"',
-  review: "Paste the contract or notice you were sent, and I'll flag the risky clauses.",
+  review: "Paste the contract or notice you were sent, or upload it, and I'll flag the risky clauses.",
+  argue: 'Set out the facts of the matter — what happened, who did what, what is being claimed.',
 };
+
+// Advocates get the research framing; everyone else gets plain language.
+const WELCOME_SUB_ADVOCATE = 'Research, draft, and review — with sources you can check.';
 
 const WELCOME_SUB = {
   ask: 'Ask any legal question, in plain language.',
   draft: 'Tell me what document you need, and I’ll draft it.',
   review: 'Paste a contract or notice and I’ll flag the risky parts.',
+  argue: 'Build your case — arguments, the case against, and how to answer it.',
 };
+
+// General users are here to understand the law; advocates are here to work.
+// Same engine, different doorways in.
+const USER_CHIPS = [
+  { label: 'What is the BNS?', fill: 'What is the Bharatiya Nyaya Sanhita and how is it different from the IPC?' },
+  { label: 'Fundamental Rights', fill: 'What are my fundamental rights under the Constitution of India?' },
+  { label: 'Filing an FIR', fill: 'How do I file an FIR, and what can I do if the police refuse to register one?' },
+  { label: 'Cheque Bounced', fill: 'My cheque bounced — what should I do now?' },
+  { label: 'Landlord & Rent', fill: 'Can my landlord increase my rent or evict me without notice?' },
+  { label: 'Consumer Complaint', fill: 'How do I file a complaint in the consumer forum?' },
+  { label: 'Right to Information', fill: 'How do I file an RTI application?' },
+  { label: 'Arrest & Bail Basics', fill: 'What are my rights if I am arrested, and how does bail work?' },
+];
 
 const CHIPS = {
   ask: [
@@ -91,14 +156,50 @@ const CHIPS = {
     { label: 'Rent Agreement', fill: 'Draft an 11-month rent agreement for a 2BHK flat.' },
   ],
   review: [],
+  argue: [],
 };
 
 const STORAGE_KEY = 'ns_active_conversation';
 
+const MODES_SET = ['ask', 'draft', 'review', 'argue'];
+
+function urlMode(params) {
+  const m = params.get('mode');
+  return MODES_SET.includes(m) ? m : 'ask';
+}
+
+// Only Ask threads are saved, so the other surfaces get their own heading and
+// an honest empty state rather than Ask's list under the wrong label.
+const MODE_LABEL = {
+  ask: 'Recents',
+  draft: 'Drafts',
+  review: 'Reviews',
+  argue: 'Argument sets',
+};
+
+const MODE_EMPTY = {
+  draft: 'Drafts are not saved yet — copy the text before you leave this page.',
+  review: 'Reviews are not saved yet — copy anything you need before you leave.',
+  argue: 'Argument sets are not saved yet — use Copy all before you leave.',
+};
+
+// The composer starts one line tall and grows with the text, like every other
+// chat box people already know. Capped so a pasted page of facts can't push
+// the conversation off screen.
+const DOCK_MAX_H = 180;
+
+function autoGrow(el) {
+  if (!el) return;
+  el.style.height = 'auto';
+  el.style.height = `${Math.min(el.scrollHeight, DOCK_MAX_H)}px`;
+}
+
 export default function Ask() {
-  const { token, user, logout } = useAuth();
+  const { token, user, logout, isAdvocate } = useAuth();
   const navigate = useNavigate();
-  const [mode, setMode] = useState('ask');
+  // /ask?mode=draft lets the Matters page link back into a specific tool.
+  const [searchParams, setSearchParams] = useSearchParams();
+  const [mode, setMode] = useState(() => urlMode(searchParams));
   const [input, setInput] = useState('');
   const [docType, setDocType] = useState('');
   const [types, setTypes] = useState([]);
@@ -112,18 +213,63 @@ export default function Ask() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [copiedIdx, setCopiedIdx] = useState(null);
+  // The uploaded file, once the server has it: { id, filename }.
+  const [attachment, setAttachment] = useState(null);
+  const [uploading, setUploading] = useState(false);
+  // Generate Arguments setup: side is required, the rest sharpen retrieval.
+  const [sides, setSides] = useState([]);
+  const [side, setSide] = useState('petitioner');
+  const [issue, setIssue] = useState('');
+  const [court, setCourt] = useState('');
+  const [setupOpen, setSetupOpen] = useState(false);
   const threadEndRef = useRef(null);
+  const fileInputRef = useRef(null);
 
   useEffect(() => {
     if (!token) return;
     refreshHistory();
-    fetchDraftTypes(token).then(setTypes).catch(() => {});
 
     // Restore the last thread so a refresh doesn't wipe the screen.
     const saved = localStorage.getItem(STORAGE_KEY);
     if (saved) loadConversation(Number(saved));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [token]);
+
+  // Draft types and argument sides are static lists that most sessions never
+  // need. Fetching them on every Ask page load added two requests before the
+  // page could settle; now they load the first time you open the tool that
+  // uses them.
+  useEffect(() => {
+    if (!token || !isAdvocate) return;
+    if (mode === 'draft' && types.length === 0) {
+      fetchDraftTypes(token).then(setTypes).catch(() => {});
+    }
+    if (mode === 'review' && types.length === 0) {
+      fetchDraftTypes(token).then(setTypes).catch(() => {});
+    }
+    if (mode === 'argue' && sides.length === 0) {
+      fetchArgumentSides(token).then(setSides).catch(() => {});
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [token, isAdvocate, mode]);
+
+  // Safety net: a general user restoring a saved draft/review thread, or an
+  // account whose role changed, snaps back to Ask instead of a dead screen.
+  useEffect(() => {
+    if (!isAdvocate && mode !== 'ask') switchMode('ask');
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isAdvocate, mode]);
+
+  // /ask?mode=draft and /ask?mode=ask are the SAME route, so React Router
+  // doesn't remount when only the query string changes - the useState
+  // initialiser runs once and never again. Without this, arriving from
+  // Matters (or the back button) changed the address bar and nothing else,
+  // leaving the nav highlight and the visible answer out of step.
+  useEffect(() => {
+    const next = urlMode(searchParams);
+    if (next !== mode) switchMode(next);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchParams]);
 
   useEffect(() => {
     threadEndRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
@@ -133,15 +279,15 @@ export default function Ask() {
     localStorage.setItem('ns_sidebar', sidebarOpen ? 'open' : 'closed');
   }, [sidebarOpen]);
 
-  function refreshHistory() {
-    fetchConversations(token).then(setHistory).catch(() => {});
+  function refreshHistory({ fresh = false } = {}) {
+    fetchConversations(token, { fresh }).then(setHistory).catch(() => {});
   }
 
   async function loadConversation(id) {
     try {
       const data = await fetchConversation(token, id);
       setConversationId(data.id);
-      setMode(data.mode || 'ask');
+      setModeAndUrl(MODES_SET.includes(data.mode) ? data.mode : 'ask');
       setTurns(
         data.turns.map((t) => ({
           kind: t.mode || 'ask',
@@ -157,17 +303,78 @@ export default function Ask() {
   }
 
   const started = loading || turns.length > 0 || !!error;
+  const modes = isAdvocate ? ALL_MODES : ALL_MODES.filter((m) => !m.advocateOnly);
+  // Draft writes a document from a description; there is nothing to read in.
+  const canAttach = mode === 'ask' || mode === 'review' || mode === 'argue';
+  // With a file attached, Review needs no typing and Ask needs only a nudge.
+  const canSubmit = !loading && !uploading && (!!input.trim() || (!!attachment && canAttach));
+  const chips = mode === 'ask' && !isAdvocate ? USER_CHIPS : CHIPS[mode];
+  const welcomeSub =
+    mode === 'ask' && isAdvocate ? WELCOME_SUB_ADVOCATE : WELCOME_SUB[mode];
 
-  function switchMode(next) {
-    setMode(next);
+  function clearThread() {
     setTurns([]);
     setConversationId(null);
     setError('');
+    clearAttachment();
     localStorage.removeItem(STORAGE_KEY);
   }
 
+  // Keeps `mode` and the ?mode= parameter in step. Everything that changes
+  // the surface goes through here, so the nav highlight, the composer and the
+  // visible answer can never disagree about which tool you are in.
+  function setModeAndUrl(next) {
+    setMode(next);
+    if (urlMode(searchParams) !== next) {
+      setSearchParams(next === 'ask' ? {} : { mode: next }, { replace: true });
+    }
+  }
+
+  function switchMode(next) {
+    if (next === mode) return;   // a no-op click shouldn't wipe the thread
+    setModeAndUrl(next);
+    clearThread();
+    // Arguments needs a side before it can do anything, so ask up front
+    // rather than letting the advocate type a page of facts and then find out.
+    setSetupOpen(next === 'argue');
+  }
+
+  function clearAttachment() {
+    setAttachment(null);
+    // Resetting the input's value matters: without it, picking the same file
+    // twice in a row fires no change event and the upload silently no-ops.
+    if (fileInputRef.current) fileInputRef.current.value = '';
+  }
+
+  async function handleFilePicked(e) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    if (file.size > MAX_UPLOAD_BYTES) {
+      setError('That file is larger than 10 MB. Try a smaller one.');
+      clearAttachment();
+      return;
+    }
+
+    setError('');
+    setUploading(true);
+    try {
+      const doc = await uploadDocument(token, file);
+      setAttachment({ id: doc.id, filename: doc.filename });
+    } catch (err) {
+      setError(err.message);
+      clearAttachment();
+    } finally {
+      setUploading(false);
+    }
+  }
+
   function startNew() {
-    switchMode('ask');
+    // Not switchMode: that returns early when the mode is unchanged, which
+    // would make "New question" do nothing while already on Ask.
+    setModeAndUrl('ask');
+    setSetupOpen(false);
+    clearThread();
     setInput('');
     setDocType('');
   }
@@ -177,7 +384,7 @@ export default function Ask() {
     try {
       await deleteConversation(token, id);
       if (id === conversationId) startNew();
-      refreshHistory();
+      refreshHistory({ fresh: true });
     } catch {
       setError('Could not delete that conversation.');
     }
@@ -190,12 +397,18 @@ export default function Ask() {
 
   async function handleSubmit(e) {
     e.preventDefault();
-    if (!input.trim() || loading) return;
+    if (!canSubmit) return;
+
     const prompt = input;
+    const sentFile = canAttach ? attachment : null;
+    // What the user sees echoed back. A bare filename is a clearer record of
+    // "I asked about this file" than an empty bubble.
+    const bubble = prompt.trim() || (sentFile ? sentFile.filename : '');
+
     setError('');
     setLoading(true);
     setInput('');
-    setTurns((t) => [...t, { kind: 'pending', prompt }]);
+    setTurns((t) => [...t, { kind: 'pending', prompt: bubble, file: sentFile?.filename }]);
 
     try {
       let turn;
@@ -204,36 +417,97 @@ export default function Ask() {
           question: prompt,
           state: user?.state,
           conversation_id: conversationId,
+          document_id: sentFile?.id,
         });
         if (data.conversation_id) {
           setConversationId(data.conversation_id);
           localStorage.setItem(STORAGE_KEY, String(data.conversation_id));
         }
-        turn = { kind: 'ask', ...data, prompt };
-        refreshHistory();
+        turn = { kind: 'ask', ...data, prompt: bubble, file: sentFile?.filename };
+        refreshHistory({ fresh: true });   // the new thread must appear now
       } else if (mode === 'draft') {
         const data = await createDraft(token, {
           doc_type: docType || null,
           instructions: prompt,
           details: null,
         });
-        turn = { kind: 'draft', ...data, prompt };
-      } else {
+        turn = { kind: 'draft', ...data, prompt: bubble };
+      } else if (mode === 'review') {
         const data = await reviewDocument(token, {
-          document_text: prompt,
+          // A pasted clause and an uploaded file are both valid; the backend
+          // prefers the text when both arrive.
+          document_text: prompt.trim() || null,
+          document_id: sentFile?.id,
           doc_type: docType || null,
           context: null,
         });
-        turn = { kind: 'review', ...data, prompt };
+        turn = { kind: 'review', ...data, prompt: bubble, file: sentFile?.filename };
+      } else if (mode === 'argue') {
+        const data = await generateArguments(token, {
+          facts: prompt.trim() || null,
+          document_id: sentFile?.id,
+          side,
+          issue: issue.trim() || null,
+          court: court.trim() || null,
+          state: user?.state,
+        });
+        turn = { kind: 'argue', ...data, prompt: bubble, file: sentFile?.filename };
+      } else {
+        // Unreachable - every mode is handled above. Kept so a future mode
+        // fails loudly here rather than silently rendering nothing.
+        throw new Error('Unknown mode.');
       }
       setTurns((t) => [...t.slice(0, -1), turn]);
+      clearAttachment();
     } catch (err) {
       setTurns((t) => t.slice(0, -1));
       setError(err.message);
       setInput(prompt);
+      // The attachment is deliberately kept on failure - an out-of-scope
+      // rejection or a network blip shouldn't cost the user the upload.
     } finally {
       setLoading(false);
     }
+  }
+
+  // Arguments is a structured object, so flatten it to something an advocate
+  // can paste into a brief rather than copying JSON.
+  // Flattens the structured argument set into something an advocate can paste
+  // into a brief. Shared by Copy all and Download so the two can't drift.
+  function argumentsAsText(data) {
+    const lines = [data.title, `For the ${data.side}`, ''];
+    const push = (heading, items, fmt) => {
+      if (!items?.length) return;
+      lines.push(heading.toUpperCase(), '');
+      items.forEach((x, i) => { lines.push(fmt(x, i)); lines.push(''); });
+    };
+
+    push('Issues', data.issues, (x, i) => `${i + 1}. ${x.question}`);
+    push('Arguments', data.arguments, (x, i) =>
+      `${i + 1}. ${x.title} [${x.strength}]\n${x.proposition}\n${x.legal_basis}\n${x.application}`);
+    push('Alternative arguments', data.alternative_arguments, (x, i) =>
+      `${i + 1}. ${x.title}\n${x.proposition}`);
+    push('Opposing arguments', data.opposing_arguments, (x, i) =>
+      `${i + 1}. ${x.title} [${x.strength}]\n${x.position}`);
+    push('Rebuttals', data.rebuttals, (x, i) =>
+      `${i + 1}. ${x.opposing_argument}\n${x.response}`);
+    push('Weaknesses', data.weaknesses, (x, i) =>
+      `${i + 1}. ${x.issue}\nRisk: ${x.risk}\nMitigation: ${x.mitigation}`);
+    push('Strategy', data.strategy, (x, i) => `${i + 1}. ${x}`);
+    push('Sources', data.sources, (x, i) =>
+      `${i + 1}. ${x.title} — ${x.source}${x.url ? ` ${x.url}` : ''}`);
+
+    lines.push('---',
+      'Prepared with Nyaya Sathi. Research assistance, not settled opinion —',
+      'open and read every authority before you cite it.');
+    return lines.join('\n');
+  }
+
+  function copyArguments(data, idx) {
+    navigator.clipboard.writeText(argumentsAsText(data)).then(() => {
+      setCopiedIdx(idx);
+      setTimeout(() => setCopiedIdx(null), 2000);
+    });
   }
 
   function copyDraft(body, idx) {
@@ -249,25 +523,92 @@ export default function Ask() {
     return acc;
   }, {});
 
-  const docSelect = mode !== 'ask' && (
-    <select className="doc-select" value={docType} onChange={(e) => setDocType(e.target.value)}>
-      <option value="">
-        {mode === 'draft' ? 'Let Nyaya Sathi decide the format' : 'Document type (optional)'}
-      </option>
-      {Object.keys(grouped).sort().map((cat) => (
-        <optgroup label={cat} key={cat}>
-          {grouped[cat].map((t) => (
-            <option value={t.id} key={t.id}>
-              {t.name}{t.needs_advocate ? ' — needs advocate review' : ''}
-            </option>
-          ))}
-        </optgroup>
-      ))}
-    </select>
+  const fileInput = (
+    <input
+      ref={fileInputRef}
+      type="file"
+      accept={ACCEPT}
+      onChange={handleFilePicked}
+      style={{ display: 'none' }}
+    />
+  );
+
+  const attachButton = canAttach && (
+    <button
+      type="button"
+      className="attach-btn"
+      onClick={() => fileInputRef.current?.click()}
+      disabled={uploading || loading}
+      title={mode === 'review' ? 'Upload a document to review' : 'Attach a document'}
+      aria-label="Attach a document"
+    >
+      {uploading ? <span className="spinner spinner-dark" /> : Icon.clip}
+    </button>
+  );
+
+  const attachChip = attachment && canAttach && (
+    <div className="attach-chip">
+      <span className="attach-chip-ic">{Icon.file}</span>
+      <span className="attach-chip-name">{attachment.filename}</span>
+      <button
+        type="button"
+        className="attach-chip-x"
+        onClick={clearAttachment}
+        aria-label="Remove attachment"
+      >
+        ×
+      </button>
+    </div>
+  );
+
+  const argueSetup = mode === 'argue' && setupOpen && (
+    <ArgumentsSetup
+      sides={sides.length ? sides : [{ id: 'petitioner', label: 'Petitioner' }]}
+      side={side}
+      onSideChange={setSide}
+      issue={issue}
+      onIssueChange={setIssue}
+      court={court}
+      onCourtChange={setCourt}
+      attachment={attachment}
+      uploading={uploading}
+      onPickFile={() => fileInputRef.current?.click()}
+      onClearFile={clearAttachment}
+      onClose={() => setSetupOpen(false)}
+    />
+  );
+
+  // Once the modal is dismissed, the choices stay visible and editable -
+  // realising you picked the wrong side after generating is expensive.
+  const argueBar = mode === 'argue' && !setupOpen && (
+    <div className="arg-bar">
+      <span className="arg-bar-side">
+        For the {(sides.find((x) => x.id === side) || {}).label || side}
+      </span>
+      {court && <span className="arg-bar-meta">{court}</span>}
+      {issue && <span className="arg-bar-meta arg-bar-issue">{issue}</span>}
+      <button type="button" className="link-btn" onClick={() => setSetupOpen(true)}>
+        Change
+      </button>
+    </div>
+  );
+
+  // Sits inline in the composer's action row rather than above the box, and
+  // always opens downward - the native select was flipping upward near the
+  // bottom of the screen and covering the answer.
+  const docSelect = mode !== 'ask' && mode !== 'argue' && (
+    <DocTypeSelect
+      value={docType}
+      onChange={setDocType}
+      groups={grouped}
+      placeholder={mode === 'draft' ? 'Let Nyaya Sathi decide' : 'Document type'}
+      disabled={loading}
+    />
   );
 
   return (
     <div className="ask-app">
+      {argueSetup}
       <header className="ask-topbar">
         <div className="ask-topbar-left">
           <button
@@ -284,9 +625,13 @@ export default function Ask() {
           </Link>
         </div>
         <div className="ask-topbar-right">
+          <ThemeToggle />
           <span className="user-chip">
             <span className="avatar">{user?.name?.[0]?.toUpperCase() || 'U'}</span>
             {user?.name?.split(' ')[0]}
+            <span className={`role-badge ${isAdvocate ? 'advocate' : ''}`}>
+              {isAdvocate ? 'Advocate' : 'Member'}
+            </span>
           </span>
           <button type="button" className="btn btn-ghost" onClick={handleLogout}>Log out</button>
         </div>
@@ -300,14 +645,14 @@ export default function Ask() {
           </button>
 
           <nav className="ask-nav" role="tablist">
-            {MODES.map((m) => (
+            {modes.map((m) => (
               <button
                 key={m.id}
                 type="button"
                 role="tab"
                 aria-selected={mode === m.id}
                 className={`ask-nav-item ${mode === m.id ? 'active' : ''}`}
-                onClick={() => switchMode(m.id)}
+                onClick={() => (m.route ? navigate(m.route) : switchMode(m.id))}
               >
                 <span className="ask-nav-icon">{m.icon}</span>
                 {m.label}
@@ -317,12 +662,17 @@ export default function Ask() {
 
           <div className="ask-sidebar-divider" />
 
-          <h4>Recents</h4>
+          <h4>{mode === 'ask' ? 'Recents' : MODE_LABEL[mode]}</h4>
           <div className="ask-history-list">
-            {history.length === 0 && (
+            {mode !== 'ask' && (
+              <div className="history-empty">
+                {MODE_EMPTY[mode]}
+              </div>
+            )}
+            {mode === 'ask' && history.length === 0 && (
               <div className="history-empty">Nothing asked yet — try a question on the right.</div>
             )}
-            {history.map((h) => (
+            {mode === 'ask' && history.map((h) => (
               <div
                 className={`history-item ${h.id === conversationId ? 'active' : ''}`}
                 key={h.id}
@@ -346,7 +696,10 @@ export default function Ask() {
               <span className="avatar">{user.name?.[0]?.toUpperCase() || 'U'}</span>
               <div className="ask-sidebar-user-text">
                 <div className="name">{user.name}</div>
-                {user.state && <div className="sub">{user.state}</div>}
+                <div className="sub">
+                  {isAdvocate ? 'Advocate' : 'Member'}
+                  {user.state ? ` · ${user.state}` : ''}
+                </div>
               </div>
             </div>
           )}
@@ -356,17 +709,26 @@ export default function Ask() {
           {!started ? (
             <div className="ask-welcome">
               <h1>Welcome to Nyaya Sathi</h1>
-              <p className="ask-welcome-sub">{WELCOME_SUB[mode]}</p>
+              <p className="ask-welcome-sub">{welcomeSub}</p>
 
               <form className="ask-input-card" onSubmit={handleSubmit}>
-                {docSelect}
-                {mode === 'review' ? (
+                {fileInput}
+                {argueBar}
+                {attachChip}
+                {mode === 'review' || mode === 'argue' ? (
                   <textarea
                     className="ask-input-textarea"
-                    rows={3}
+                    rows={2}
+                    ref={autoGrow}
                     value={input}
-                    onChange={(e) => setInput(e.target.value)}
-                    placeholder={PLACEHOLDERS.review}
+                    onChange={(e) => { setInput(e.target.value); autoGrow(e.target); }}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' && !e.shiftKey) {
+                        e.preventDefault();
+                        handleSubmit(e);
+                      }
+                    }}
+                    placeholder={PLACEHOLDERS[mode]}
                   />
                 ) : (
                   <textarea
@@ -384,16 +746,18 @@ export default function Ask() {
                   />
                 )}
                 <div className="ask-input-actions">
-                  <button type="button" className="attach-btn" disabled title="Attachments coming soon">+</button>
-                  <button type="submit" className="send-btn" disabled={loading || !input.trim()}>
-                    {loading ? <span className="spinner" /> : '↑'}
+                  {attachButton}
+                  {docSelect}
+                  <span className="actions-spacer" />
+                  <button type="submit" className="send-btn" disabled={!canSubmit}>
+                    {loading ? <span className="spinner" /> : '\u2191'}
                   </button>
                 </div>
               </form>
 
-              {CHIPS[mode]?.length > 0 && (
+              {chips?.length > 0 && (
                 <div className="ask-chip-grid">
-                  {CHIPS[mode].map((c) => (
+                  {chips.map((c) => (
                     <button
                       key={c.label}
                       type="button"
@@ -412,10 +776,17 @@ export default function Ask() {
             </div>
           ) : (
             <div className="ask-conversation">
-              <div className="ask-thread">
+              <div className={`ask-thread ${mode === 'argue' ? 'thread-wide' : ''}`}>
                 {turns.map((t, i) => (
                   <div className="ask-turn" key={i}>
-                    <div className="ask-user-bubble">{t.prompt}</div>
+                    <div className="ask-user-bubble">
+                      {t.file && (
+                        <span className="bubble-file">
+                          {Icon.file} {t.file}
+                        </span>
+                      )}
+                      {t.prompt !== t.file && t.prompt}
+                    </div>
                     {t.kind === 'pending' ? (
                       <div className="ask-thinking">
                         <span className="spinner" /> Thinking through this…
@@ -431,6 +802,13 @@ export default function Ask() {
                           />
                         )}
                         {t.kind === 'review' && <ReviewResult data={t} />}
+                        {t.kind === 'argue' && (
+                          <ArgumentsResult
+                            data={t}
+                            onCopy={() => copyArguments(t, i)}
+                            copied={copiedIdx === i}
+                          />
+                        )}
                       </>
                     )}
                   </div>
@@ -440,27 +818,36 @@ export default function Ask() {
                 <div ref={threadEndRef} />
               </div>
 
-              <form className="ask-form-dock" onSubmit={handleSubmit}>
-                {docSelect}
+              <form
+                className={`ask-form-dock ${mode === 'argue' ? 'dock-wide' : ''}`}
+                onSubmit={handleSubmit}
+              >
+                {fileInput}
                 <div className="ask-dock-row">
-                  {mode === 'review' ? (
+                  {argueBar}
+                  {attachChip}
+                  <div className="dock-box">
+                    {attachButton}
+                    {docSelect}
                     <textarea
-                      className="review-input"
-                      rows={3}
+                      className="dock-input"
+                      rows={1}
                       value={input}
-                      onChange={(e) => setInput(e.target.value)}
-                      placeholder={PLACEHOLDERS.review}
-                    />
-                  ) : (
-                    <input
-                      value={input}
-                      onChange={(e) => setInput(e.target.value)}
+                      ref={autoGrow}
+                      onChange={(e) => { setInput(e.target.value); autoGrow(e.target); }}
+                      onKeyDown={(e) => {
+                        // Enter sends, Shift+Enter breaks the line.
+                        if (e.key === 'Enter' && !e.shiftKey) {
+                          e.preventDefault();
+                          handleSubmit(e);
+                        }
+                      }}
                       placeholder={PLACEHOLDERS[mode]}
                     />
-                  )}
-                  <button className="btn btn-primary" type="submit" disabled={loading || !input.trim()}>
-                    {loading ? <span className="spinner" /> : mode === 'ask' ? 'Ask' : mode === 'draft' ? 'Draft it' : 'Review it'}
-                  </button>
+                    <button className="dock-send" type="submit" disabled={!canSubmit}>
+                      {loading ? <span className="spinner" /> : '\u2191'}
+                    </button>
+                  </div>
                 </div>
               </form>
             </div>
@@ -487,7 +874,7 @@ function Citations({ items, label = 'Sources' }) {
               <div className="cite-sub">{c.source}</div>
               {c.snippet && <div className="cite-snippet">{c.snippet}</div>}
             </div>
-            {href && <span className="cite-arrow" aria-hidden="true">↗</span>}
+            {href && <span className="cite-arrow" aria-hidden="true">&#8599;</span>}
           </>
         );
         return href ? (
@@ -502,12 +889,28 @@ function Citations({ items, label = 'Sources' }) {
   );
 }
 
+/* How well the answer is supported. The backend derives this from what
+   retrieval returned and what the prose cites — it is never a number the
+   model gave itself, which is why it can be trusted enough to show. */
+function Grounding({ data }) {
+  if (!data) return <div className="status-chip live"><span className="dot" /> Answered live</div>;
+
+  const title = data.reasons?.length ? data.reasons.join(' ') : undefined;
+  return (
+    <div className={`ground-chip g-${data.level}`} title={title}>
+      <span className="dot" />
+      {data.label}
+      {data.repealed > 0 && <span className="ground-warn">repealed law cited</span>}
+    </div>
+  );
+}
+
 function AskResult({ data }) {
   return (
     <div className="demo-card">
       <div className="demo-topbar">
         <div className="demo-brand"><span className="sq">न्या</span> Research</div>
-        <div className="status-chip live"><span className="dot" /> Answered live</div>
+        <Grounding data={data.grounding} />
       </div>
       <h4 className="answer-title">{data.title}</h4>
       {(data.body || '').split(/\n{2,}/).map((p, i) => (
@@ -522,6 +925,12 @@ function AskResult({ data }) {
           ))}
         </div>
       )}
+      {data.grounding?.reasons?.length > 0 && data.grounding.level !== 'well_grounded' && (
+        <div className="ground-note">
+          {data.grounding.reasons.map((r, i) => <p key={i}>{r}</p>)}
+        </div>
+      )}
+
       <p className="answer-disclaimer">
         Legal information drawn from public statutes and judgments, not legal advice.
         Check the linked sources or speak to a lawyer before you act.
@@ -614,13 +1023,8 @@ function ReviewResult({ data }) {
           <p className="flag-issue">{f.issue}</p>
           <p className="flag-suggestion"><strong>Suggested change:</strong> {f.suggestion}</p>
           {f.citation && (
-            <a
-              className="flag-cite"
-              href={f.citation.url}
-              target="_blank"
-              rel="noopener noreferrer"
-            >
-              {f.citation.title} ↗
+            <a className="flag-cite" href={f.citation.url} target="_blank" rel="noopener noreferrer">
+              {f.citation.title} &#8599;
             </a>
           )}
         </div>
@@ -636,8 +1040,8 @@ function ReviewResult({ data }) {
       )}
 
       <p className="answer-disclaimer">
-        An automated first pass, not a lawyer's opinion. Have anything you're about
-        to sign checked by an advocate.
+        An automated first pass, not a lawyer&apos;s opinion. Have anything you&apos;re
+        about to sign checked by an advocate.
       </p>
     </div>
   );

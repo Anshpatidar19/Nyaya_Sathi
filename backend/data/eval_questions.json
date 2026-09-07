@@ -1,0 +1,718 @@
+{
+  "_readme": [
+    "Ground truth for retrieval evaluation. Run: python -m app.eval_retrieval",
+    "",
+    "Each case is a plain-language question plus the section(s) that SHOULD come",
+    "back. A case passes if any expected key appears in the top-k hits.",
+    "",
+    "Keys are 'act_key:section' exactly as statutes.py builds them - 'bns:103',",
+    "'coi:21'. Every section below was checked against the ingested JSON, so a",
+    "miss means retrieval failed, not that the section is absent.",
+    "",
+    "Only BNS and the Constitution are ingested today. Add cases for other acts",
+    "as you ingest them, but never add an expected key you haven't verified -",
+    "an eval with wrong answers is worse than no eval.",
+    "",
+    "'tier' separates the two things being measured:",
+    "  citation - the user names the provision; near-100% is the bar",
+    "  semantic - the user describes a situation; this is the real test",
+    "",
+    "Cases for the acts ingested from mratanusarkar/Indian-Laws were added without being checked against the files - run `--verify` to confirm every expected section actually exists, and fix any that don't before trusting the score."
+  ],
+  "cases": [
+    {
+      "id": "bns-murder-punishment",
+      "tier": "semantic",
+      "q": "what is the punishment for murder in India",
+      "expect": [
+        "bns:103"
+      ]
+    },
+    {
+      "id": "bns-murder-defined",
+      "tier": "semantic",
+      "q": "when does killing someone amount to murder rather than culpable homicide",
+      "expect": [
+        "bns:101",
+        "bns:100"
+      ]
+    },
+    {
+      "id": "bns-negligence-death",
+      "tier": "semantic",
+      "q": "my neighbour caused a fatal accident by rash driving, what offence is that",
+      "expect": [
+        "bns:106"
+      ]
+    },
+    {
+      "id": "bns-attempt-murder",
+      "tier": "semantic",
+      "q": "someone tried to kill me but I survived, what is the charge",
+      "expect": [
+        "bns:109"
+      ]
+    },
+    {
+      "id": "bns-theft",
+      "tier": "semantic",
+      "q": "my phone was taken from my bag without me noticing",
+      "expect": [
+        "bns:303",
+        "bns:304"
+      ]
+    },
+    {
+      "id": "bns-snatching",
+      "tier": "semantic",
+      "q": "a man on a bike grabbed my chain and rode away",
+      "expect": [
+        "bns:304",
+        "bns:303"
+      ]
+    },
+    {
+      "id": "bns-robbery",
+      "tier": "semantic",
+      "q": "they used force to take my money from me on the street",
+      "expect": [
+        "bns:309",
+        "bns:308"
+      ]
+    },
+    {
+      "id": "bns-cheating",
+      "tier": "semantic",
+      "q": "a seller took my money online and never delivered the goods",
+      "expect": [
+        "bns:318"
+      ]
+    },
+    {
+      "id": "bns-breach-of-trust",
+      "tier": "semantic",
+      "q": "my business partner misused money I entrusted to him",
+      "expect": [
+        "bns:316"
+      ]
+    },
+    {
+      "id": "bns-extortion",
+      "tier": "semantic",
+      "q": "someone is threatening me to make me hand over money",
+      "expect": [
+        "bns:308",
+        "bns:351"
+      ]
+    },
+    {
+      "id": "bns-intimidation",
+      "tier": "semantic",
+      "q": "a person keeps threatening to harm my family if I complain",
+      "expect": [
+        "bns:351"
+      ]
+    },
+    {
+      "id": "bns-defamation",
+      "tier": "semantic",
+      "q": "someone posted false statements damaging my reputation",
+      "expect": [
+        "bns:356"
+      ]
+    },
+    {
+      "id": "bns-stalking",
+      "tier": "semantic",
+      "q": "a man keeps following me and messaging me despite being told to stop",
+      "expect": [
+        "bns:78"
+      ]
+    },
+    {
+      "id": "bns-voyeurism",
+      "tier": "semantic",
+      "q": "someone secretly photographed a woman in a private act",
+      "expect": [
+        "bns:77"
+      ]
+    },
+    {
+      "id": "bns-dowry-death",
+      "tier": "semantic",
+      "q": "a woman died within a few years of marriage after dowry harassment",
+      "expect": [
+        "bns:80"
+      ]
+    },
+    {
+      "id": "bns-cruelty-husband",
+      "tier": "semantic",
+      "q": "my husband and his family are harassing me for dowry",
+      "expect": [
+        "bns:85",
+        "bns:86"
+      ]
+    },
+    {
+      "id": "bns-abetment-suicide",
+      "tier": "semantic",
+      "q": "can a person be prosecuted for driving someone to take their own life",
+      "expect": [
+        "bns:108",
+        "bns:107"
+      ]
+    },
+    {
+      "id": "bns-private-defence",
+      "tier": "semantic",
+      "q": "can I hurt someone who attacked me first",
+      "expect": [
+        "bns:35",
+        "bns:38"
+      ]
+    },
+    {
+      "id": "bns-conspiracy",
+      "tier": "semantic",
+      "q": "two people planned a crime together but only one carried it out",
+      "expect": [
+        "bns:61",
+        "bns:45"
+      ]
+    },
+    {
+      "id": "bns-grievous-hurt",
+      "tier": "semantic",
+      "q": "I was beaten badly enough to fracture a bone",
+      "expect": [
+        "bns:116",
+        "bns:117"
+      ]
+    },
+    {
+      "id": "bns-acid-attack",
+      "tier": "semantic",
+      "q": "punishment for throwing acid on someone",
+      "expect": [
+        "bns:124"
+      ]
+    },
+    {
+      "id": "bns-wrongful-confinement",
+      "tier": "semantic",
+      "q": "they locked me in a room and would not let me leave",
+      "expect": [
+        "bns:127",
+        "bns:126"
+      ]
+    },
+    {
+      "id": "bns-kidnapping",
+      "tier": "semantic",
+      "q": "a child was taken away from her parents without permission",
+      "expect": [
+        "bns:137",
+        "bns:138"
+      ]
+    },
+    {
+      "id": "bns-house-trespass",
+      "tier": "semantic",
+      "q": "someone broke into my house at night",
+      "expect": [
+        "bns:330",
+        "bns:329",
+        "bns:331"
+      ]
+    },
+    {
+      "id": "bns-mischief",
+      "tier": "semantic",
+      "q": "a neighbour deliberately damaged my parked car",
+      "expect": [
+        "bns:324"
+      ]
+    },
+    {
+      "id": "bns-forgery",
+      "tier": "semantic",
+      "q": "someone made a fake document and signed my name on it",
+      "expect": [
+        "bns:336",
+        "bns:338"
+      ]
+    },
+    {
+      "id": "bns-counterfeit-currency",
+      "tier": "semantic",
+      "q": "what is the offence for making fake currency notes",
+      "expect": [
+        "bns:178",
+        "bns:179"
+      ]
+    },
+    {
+      "id": "bns-rioting",
+      "tier": "semantic",
+      "q": "a group of five people gathered and used violence during a protest",
+      "expect": [
+        "bns:191",
+        "bns:189"
+      ]
+    },
+    {
+      "id": "bns-organised-crime",
+      "tier": "semantic",
+      "q": "is there a specific offence for organised criminal syndicates",
+      "expect": [
+        "bns:111",
+        "bns:112"
+      ]
+    },
+    {
+      "id": "bns-terrorist-act",
+      "tier": "semantic",
+      "q": "which provision of the penal law deals with terrorist acts",
+      "expect": [
+        "bns:113"
+      ]
+    },
+    {
+      "id": "coi-equality",
+      "tier": "semantic",
+      "q": "does the Constitution guarantee that everyone is equal before the law",
+      "expect": [
+        "coi:14"
+      ]
+    },
+    {
+      "id": "coi-discrimination",
+      "tier": "semantic",
+      "q": "can I be refused a service because of my caste or religion",
+      "expect": [
+        "coi:15"
+      ]
+    },
+    {
+      "id": "coi-public-employment",
+      "tier": "semantic",
+      "q": "are government jobs open equally to all citizens",
+      "expect": [
+        "coi:16"
+      ]
+    },
+    {
+      "id": "coi-untouchability",
+      "tier": "semantic",
+      "q": "is untouchability abolished by the Constitution",
+      "expect": [
+        "coi:17"
+      ]
+    },
+    {
+      "id": "coi-free-speech",
+      "tier": "semantic",
+      "q": "what are my rights to free speech and expression",
+      "expect": [
+        "coi:19"
+      ]
+    },
+    {
+      "id": "coi-double-jeopardy",
+      "tier": "semantic",
+      "q": "can I be tried twice for the same offence",
+      "expect": [
+        "coi:20"
+      ]
+    },
+    {
+      "id": "coi-life-liberty",
+      "tier": "semantic",
+      "q": "what does the right to life and personal liberty cover",
+      "expect": [
+        "coi:21"
+      ]
+    },
+    {
+      "id": "coi-arrest-rights",
+      "tier": "semantic",
+      "q": "what are my rights if the police arrest and detain me",
+      "expect": [
+        "coi:22"
+      ]
+    },
+    {
+      "id": "coi-forced-labour",
+      "tier": "semantic",
+      "q": "is bonded labour and human trafficking prohibited",
+      "expect": [
+        "coi:23"
+      ]
+    },
+    {
+      "id": "coi-child-labour",
+      "tier": "semantic",
+      "q": "can children be employed in factories",
+      "expect": [
+        "coi:24"
+      ]
+    },
+    {
+      "id": "coi-religion",
+      "tier": "semantic",
+      "q": "do I have the freedom to practise and propagate my religion",
+      "expect": [
+        "coi:25"
+      ]
+    },
+    {
+      "id": "coi-minority-institutions",
+      "tier": "semantic",
+      "q": "can a minority community run its own educational institution",
+      "expect": [
+        "coi:30",
+        "coi:29"
+      ]
+    },
+    {
+      "id": "coi-writ-supreme",
+      "tier": "semantic",
+      "q": "how do I approach the Supreme Court when a fundamental right is violated",
+      "expect": [
+        "coi:32"
+      ]
+    },
+    {
+      "id": "coi-writ-high-court",
+      "tier": "semantic",
+      "q": "can a High Court issue a writ against a government authority",
+      "expect": [
+        "coi:226"
+      ]
+    },
+    {
+      "id": "coi-property",
+      "tier": "semantic",
+      "q": "can the government take my land without legal authority",
+      "expect": [
+        "coi:300A"
+      ]
+    },
+    {
+      "id": "coi-legal-aid",
+      "tier": "semantic",
+      "q": "is free legal aid guaranteed to people who cannot afford a lawyer",
+      "expect": [
+        "coi:39A"
+      ]
+    },
+    {
+      "id": "coi-uniform-civil-code",
+      "tier": "semantic",
+      "q": "what does the Constitution say about a uniform civil code",
+      "expect": [
+        "coi:44"
+      ]
+    },
+    {
+      "id": "coi-fundamental-duties",
+      "tier": "semantic",
+      "q": "what duties does the Constitution place on citizens",
+      "expect": [
+        "coi:51A"
+      ]
+    },
+    {
+      "id": "coi-presidents-rule",
+      "tier": "semantic",
+      "q": "what happens when constitutional machinery fails in a state",
+      "expect": [
+        "coi:356"
+      ]
+    },
+    {
+      "id": "coi-amendment",
+      "tier": "semantic",
+      "q": "how can the Constitution itself be amended",
+      "expect": [
+        "coi:368"
+      ]
+    },
+    {
+      "id": "cite-bns-103",
+      "tier": "citation",
+      "q": "what does BNS section 103 say",
+      "expect": [
+        "bns:103"
+      ]
+    },
+    {
+      "id": "cite-bns-318",
+      "tier": "citation",
+      "q": "explain section 318 of the Bharatiya Nyaya Sanhita",
+      "expect": [
+        "bns:318"
+      ]
+    },
+    {
+      "id": "cite-bns-63",
+      "tier": "citation",
+      "q": "BNS 63",
+      "expect": [
+        "bns:63"
+      ]
+    },
+    {
+      "id": "cite-coi-21",
+      "tier": "citation",
+      "q": "Article 21 of the Constitution",
+      "expect": [
+        "coi:21"
+      ]
+    },
+    {
+      "id": "cite-coi-32",
+      "tier": "citation",
+      "q": "what is article 32",
+      "expect": [
+        "coi:32"
+      ]
+    },
+    {
+      "id": "cite-preamble",
+      "tier": "citation",
+      "q": "what does the Preamble to the Constitution say",
+      "expect": [
+        "coi:Preamble"
+      ]
+    },
+    {
+      "id": "ni-cheque-bounce",
+      "tier": "semantic",
+      "q": "my cheque bounced, what can I do about it",
+      "expect": [
+        "nia:138"
+      ]
+    },
+    {
+      "id": "ni-cheque-notice",
+      "tier": "semantic",
+      "q": "how long do I have to send notice after a cheque is dishonoured",
+      "expect": [
+        "nia:138"
+      ]
+    },
+    {
+      "id": "ni-promissory-note",
+      "tier": "semantic",
+      "q": "what makes a document a promissory note",
+      "expect": [
+        "nia:4"
+      ]
+    },
+    {
+      "id": "ni-cheque-defined",
+      "tier": "semantic",
+      "q": "what counts as a cheque in law",
+      "expect": [
+        "nia:6"
+      ]
+    },
+    {
+      "id": "contract-damages",
+      "tier": "semantic",
+      "q": "the other party broke our agreement, what compensation can I claim",
+      "expect": [
+        "contract:73"
+      ]
+    },
+    {
+      "id": "contract-penalty",
+      "tier": "semantic",
+      "q": "is a penalty clause in a contract enforceable",
+      "expect": [
+        "contract:74",
+        "contract:73"
+      ]
+    },
+    {
+      "id": "contract-what-is",
+      "tier": "semantic",
+      "q": "what makes an agreement a legally binding contract",
+      "expect": [
+        "contract:10"
+      ]
+    },
+    {
+      "id": "contract-minor",
+      "tier": "semantic",
+      "q": "can a minor enter into a contract",
+      "expect": [
+        "contract:11"
+      ]
+    },
+    {
+      "id": "contract-consent",
+      "tier": "semantic",
+      "q": "what does consent mean in contract law",
+      "expect": [
+        "contract:13",
+        "contract:14"
+      ]
+    },
+    {
+      "id": "contract-coercion",
+      "tier": "semantic",
+      "q": "I signed under threat, is the agreement valid",
+      "expect": [
+        "contract:15",
+        "contract:19"
+      ]
+    },
+    {
+      "id": "tpa-sale-defined",
+      "tier": "semantic",
+      "q": "what is a sale of immoveable property",
+      "expect": [
+        "tpa:54"
+      ]
+    },
+    {
+      "id": "tpa-mortgage",
+      "tier": "semantic",
+      "q": "what are the different kinds of mortgage",
+      "expect": [
+        "tpa:58"
+      ]
+    },
+    {
+      "id": "crpc-fir",
+      "tier": "semantic",
+      "q": "how do I get the police to register an FIR",
+      "expect": [
+        "crpc:154"
+      ]
+    },
+    {
+      "id": "crpc-arrest-no-warrant",
+      "tier": "semantic",
+      "q": "when can the police arrest without a warrant",
+      "expect": [
+        "crpc:41"
+      ]
+    },
+    {
+      "id": "crpc-maintenance",
+      "tier": "semantic",
+      "q": "can I claim maintenance from my husband",
+      "expect": [
+        "crpc:125"
+      ]
+    },
+    {
+      "id": "crpc-anticipatory-bail",
+      "tier": "semantic",
+      "q": "how do I apply for anticipatory bail",
+      "expect": [
+        "crpc:438"
+      ]
+    },
+    {
+      "id": "crpc-bail",
+      "tier": "semantic",
+      "q": "when is bail granted in a bailable offence",
+      "expect": [
+        "crpc:436"
+      ]
+    },
+    {
+      "id": "hma-divorce",
+      "tier": "semantic",
+      "q": "on what grounds can I get a divorce",
+      "expect": [
+        "hma:13"
+      ]
+    },
+    {
+      "id": "hma-conditions",
+      "tier": "semantic",
+      "q": "what are the conditions for a valid Hindu marriage",
+      "expect": [
+        "hma:5"
+      ]
+    },
+    {
+      "id": "hma-mutual-consent",
+      "tier": "semantic",
+      "q": "how does divorce by mutual consent work",
+      "expect": [
+        "hma:13"
+      ]
+    },
+    {
+      "id": "rti-apply",
+      "tier": "semantic",
+      "q": "how do I file an application for information from a public authority",
+      "expect": [
+        "rti:6"
+      ]
+    },
+    {
+      "id": "rti-exempt",
+      "tier": "semantic",
+      "q": "what information can a public authority refuse to give",
+      "expect": [
+        "rti:8"
+      ]
+    },
+    {
+      "id": "mva-drunk-driving",
+      "tier": "semantic",
+      "q": "what is the punishment for drink driving",
+      "expect": [
+        "mva:185"
+      ]
+    },
+    {
+      "id": "mva-accident-duty",
+      "tier": "semantic",
+      "q": "what must a driver do after causing an accident",
+      "expect": [
+        "mva:134"
+      ]
+    },
+    {
+      "id": "cite-nia-138",
+      "tier": "citation",
+      "q": "section 138 of the Negotiable Instruments Act",
+      "expect": [
+        "nia:138"
+      ]
+    },
+    {
+      "id": "cite-contract-73",
+      "tier": "citation",
+      "q": "section 73 Indian Contract Act",
+      "expect": [
+        "contract:73"
+      ]
+    },
+    {
+      "id": "cite-crpc-154",
+      "tier": "citation",
+      "q": "CrPC 154",
+      "expect": [
+        "crpc:154"
+      ]
+    },
+    {
+      "id": "cite-rti-6",
+      "tier": "citation",
+      "q": "section 6 RTI Act",
+      "expect": [
+        "rti:6"
+      ]
+    }
+  ]
+}

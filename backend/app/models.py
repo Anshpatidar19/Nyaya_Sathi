@@ -2,7 +2,9 @@ import datetime
 
 from sqlalchemy import (
     BigInteger,
+    Boolean,
     Column,
+    Date,
     DateTime,
     ForeignKey,
     Integer,
@@ -31,15 +33,117 @@ class User(Base):
     hashed_password = Column(String, nullable=True)
     preferred_language = Column(String, default="en")
     state = Column(String, nullable=True)
+
+    # "user" or "advocate". Chosen at signup and never verified - this is a
+    # product distinction (which tools you see), not a security boundary.
+    role = Column(String, nullable=False, default="user", server_default="user")
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
 
     queries = relationship("QueryLog", back_populates="user")
+    matters = relationship(
+        "Matter", back_populates="user", cascade="all, delete-orphan"
+    )
     conversations = relationship(
         "Conversation", back_populates="user", cascade="all, delete-orphan"
     )
     documents = relationship(
         "Document", back_populates="user", cascade="all, delete-orphan"
     )
+
+
+class Matter(Base):
+    """A case file. Everything an advocate does for one client, in one place.
+
+    Advocate-only in practice - the API gates it - but the column lives on
+    users like any other, so a role change doesn't orphan rows.
+    """
+
+    __tablename__ = "matters"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+
+    title = Column(String, nullable=False)              # "Meridian v. Sundaram"
+    client_name = Column(String, nullable=True)
+    case_number = Column(String, nullable=True)         # "CS 118/2026"
+    court = Column(String, nullable=True)
+    # Which party the advocate appears for - reused by Generate Arguments.
+    side = Column(String, nullable=True)
+    description = Column(Text, nullable=True)
+    # Free-form matter-level notes, distinct from the dated hearing notes.
+    notes = Column(Text, nullable=True)
+    # Comma-separated. A join table would be tidier but this is a demo and
+    # tags are only ever read as a whole.
+    tags = Column(String, nullable=True)
+    status = Column(String, nullable=False, default="active")   # active | archived
+    urgent = Column(Boolean, nullable=False, default=False, server_default="false")
+
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+    updated_at = Column(
+        DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow
+    )
+
+    user = relationship("User", back_populates="matters")
+    events = relationship(
+        "MatterEvent",
+        back_populates="matter",
+        cascade="all, delete-orphan",
+        order_by="MatterEvent.event_date",
+    )
+    notes_entries = relationship(
+        "MatterNote",
+        back_populates="matter",
+        cascade="all, delete-orphan",
+        order_by="MatterNote.note_date.desc()",
+    )
+    documents = relationship("Document", back_populates="matter")
+    conversations = relationship("Conversation", back_populates="matter")
+
+
+class MatterEvent(Base):
+    """A dated entry on the matter's timeline - hearing, filing, deadline,
+    client meeting. `done` is what lets past hearings drop out of the
+    upcoming list without being deleted."""
+
+    __tablename__ = "matter_events"
+
+    id = Column(Integer, primary_key=True, index=True)
+    matter_id = Column(Integer, ForeignKey("matters.id"), nullable=False, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+
+    kind = Column(String, nullable=False, default="hearing")
+    title = Column(String, nullable=False)
+    event_date = Column(Date, nullable=False, index=True)
+    event_time = Column(String, nullable=True)          # "11:00 AM", free text
+    location = Column(String, nullable=True)
+    notes = Column(Text, nullable=True)
+    done = Column(Boolean, nullable=False, default=False, server_default="false")
+
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+
+    matter = relationship("Matter", back_populates="events")
+
+
+class MatterNote(Base):
+    """What actually happened on a given date. Written after the hearing,
+    which is why it is separate from the event that scheduled it."""
+
+    __tablename__ = "matter_notes"
+
+    id = Column(Integer, primary_key=True, index=True)
+    matter_id = Column(Integer, ForeignKey("matters.id"), nullable=False, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+
+    note_date = Column(Date, nullable=False, index=True)
+    title = Column(String, nullable=True)
+    body = Column(Text, nullable=False)
+
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+    updated_at = Column(
+        DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow
+    )
+
+    matter = relationship("Matter", back_populates="notes_entries")
 
 
 class Conversation(Base):
@@ -53,14 +157,17 @@ class Conversation(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    # Nullable: research done outside any matter is still worth keeping.
+    matter_id = Column(Integer, ForeignKey("matters.id"), nullable=True, index=True)
     title = Column(String, nullable=False, default="New conversation")
-    mode = Column(String, nullable=False, default="ask")   # ask | draft | review
+    mode = Column(String, nullable=False, default="ask")   # ask | draft | review | argue
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
     updated_at = Column(
         DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow
     )
 
     user = relationship("User", back_populates="conversations")
+    matter = relationship("Matter", back_populates="conversations")
     turns = relationship(
         "QueryLog",
         back_populates="conversation",
@@ -107,6 +214,8 @@ class Document(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    # Filed under a matter, or loose if uploaded straight into a chat.
+    matter_id = Column(Integer, ForeignKey("matters.id"), nullable=True, index=True)
     filename = Column(String, nullable=False)          # original name, for display
     storage_path = Column(String, nullable=False, unique=True)
     content_type = Column(String, nullable=True)
@@ -115,3 +224,4 @@ class Document(Base):
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
 
     user = relationship("User", back_populates="documents")
+    matter = relationship("Matter", back_populates="documents")

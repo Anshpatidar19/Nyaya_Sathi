@@ -2,6 +2,7 @@ import datetime
 import json
 import logging
 
+import httpx
 from fastapi import (
     Depends,
     FastAPI,
@@ -13,10 +14,22 @@ from fastapi import (
 )
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import OAuth2PasswordRequestForm
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, selectinload
 
-from . import drafting, kanoon, models, reasoning, schemas, statutes, storage, supabase_auth
-from .auth import ensure_profile, get_current_user
+from . import (
+    arguments,
+    doc_scope,
+    drafting,
+    kanoon,
+    models,
+    reasoning,
+    schemas,
+    statutes,
+    storage,
+    supabase_auth,
+)
+from .auth import ensure_profile, get_current_user, require_advocate
+from .matters_api import router as matters_router
 from .config import settings
 from .database import Base, SessionLocal, engine, get_db
 
@@ -55,6 +68,9 @@ async def startup_checks():
         logger.warning("Supabase Storage not configured: %s", exc)
 
 
+app.include_router(matters_router)
+
+
 @app.get("/health")
 def health():
     return {"status": "ok"}
@@ -83,6 +99,7 @@ async def register(payload: schemas.UserCreate, db: Session = Depends(get_db)):
                 "name": payload.name,
                 "state": payload.state,
                 "preferred_language": payload.preferred_language,
+                "role": payload.role,
             },
         )
     except supabase_auth.AuthError as exc:
@@ -101,6 +118,7 @@ async def register(payload: schemas.UserCreate, db: Session = Depends(get_db)):
             name=payload.name,
             state=payload.state,
             preferred_language=payload.preferred_language,
+            role=payload.role,
         )
 
     if supabase_auth.needs_confirmation(result):
@@ -138,9 +156,20 @@ async def forgot_password(payload: schemas.EmailOnly):
     """Always reports success - confirming which addresses exist would let
     anyone enumerate the user list."""
     await supabase_auth.send_password_reset(
-        payload.email, redirect_to=f"{settings.site_url}/login"
+        payload.email, redirect_to=f"{settings.site_url}/reset"
     )
     return {"message": "If that address is registered, a reset link is on its way."}
+
+
+@app.post("/auth/reset-password")
+async def reset_password(payload: schemas.PasswordReset):
+    """Finish a reset. The frontend reads the recovery token out of the
+    emailed link's URL fragment and posts it here with the new password."""
+    try:
+        await supabase_auth.update_password(payload.access_token, payload.new_password)
+    except supabase_auth.AuthError as exc:
+        raise HTTPException(status_code=exc.status, detail=str(exc))
+    return {"message": "Password updated. You can log in with it now."}
 
 
 @app.post("/auth/login", response_model=schemas.TokenOut)
@@ -161,6 +190,7 @@ async def login(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = 
         name=meta.get("name"),
         state=meta.get("state"),
         preferred_language=meta.get("preferred_language", "en"),
+        role=meta.get("role"),
     )
 
     return schemas.TokenOut(
@@ -172,6 +202,55 @@ async def login(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = 
 @app.get("/auth/me", response_model=schemas.UserOut)
 def me(current_user: models.User = Depends(get_current_user)):
     return current_user
+
+
+# ---------------- Uploaded documents ----------------
+
+async def _load_document(
+    db: Session, doc_id: int, user: models.User
+) -> tuple[models.Document, str]:
+    """Fetch one of the caller's own documents and extract its text.
+
+    Ownership is checked here rather than trusted from the client, so a
+    document_id belonging to someone else is a 404, not a data leak.
+    """
+    doc = (
+        db.query(models.Document)
+        .filter(
+            models.Document.id == doc_id,
+            models.Document.user_id == user.id,
+        )
+        .first()
+    )
+    if not doc:
+        raise HTTPException(status_code=404, detail="Document not found.")
+
+    try:
+        url = await storage.signed_url(doc.storage_path, expires_in=120)
+        async with httpx.AsyncClient(timeout=60.0) as client:
+            blob = await client.get(url)
+            blob.raise_for_status()
+        text = drafting.extract_text(blob.content, doc.content_type, doc.filename)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.exception("Could not read stored document %s: %s", doc.id, exc)
+        raise HTTPException(status_code=503, detail="Could not read that document.")
+
+    return doc, text
+
+
+async def _gate_document(text: str, filename: str) -> None:
+    """Refuse anything outside this platform's subject matter.
+
+    422 rather than 400: the request was well-formed, the content just isn't
+    something a legal-information system should be explaining.
+    """
+    verdict = await doc_scope.check(text, filename)
+    if not verdict.in_scope:
+        raise HTTPException(status_code=422, detail=verdict.reason)
 
 
 # ---------------- Ask (core Q&A) ----------------
@@ -194,7 +273,12 @@ def _thread_history(db: Session, conversation_id: int) -> list[dict]:
 
 
 def _get_or_create_conversation(
-    db: Session, user: models.User, conversation_id: int | None, first_question: str, mode: str
+    db: Session,
+    user: models.User,
+    conversation_id: int | None,
+    first_question: str,
+    mode: str,
+    matter_id: int | None = None,
 ) -> models.Conversation:
     if conversation_id:
         convo = (
@@ -210,6 +294,7 @@ def _get_or_create_conversation(
 
     convo = models.Conversation(
         user_id=user.id,
+        matter_id=matter_id,
         title=first_question[:80],
         mode=mode,
     )
@@ -225,20 +310,38 @@ async def ask(
     db: Session = Depends(get_db),
     current_user: models.User = Depends(get_current_user),
 ):
+    question = payload.question.strip()
+
+    document = None
+    if payload.document_id:
+        doc, text = await _load_document(db, payload.document_id, current_user)
+        await _gate_document(text, doc.filename)
+        document = {"filename": doc.filename, "text": text}
+        # "Explain this" with a file attached is a complete request; give the
+        # model a real instruction rather than an empty string.
+        if not question:
+            question = f"Explain this document and what it means for me."
+
+    if not question:
+        raise HTTPException(status_code=400, detail="Ask a question, or attach a document.")
+
+    title_seed = question if not document else f"{document['filename']} — {question}"
     convo = _get_or_create_conversation(
-        db, current_user, payload.conversation_id, payload.question, "ask"
+        db, current_user, payload.conversation_id, title_seed, "ask", payload.matter_id
     )
     history = _thread_history(db, convo.id) if payload.conversation_id else []
 
     answer = await reasoning.answer_question(
-        payload.question, payload.state or current_user.state, history
+        question, payload.state or current_user.state, history, document
     )
+    if document:
+        answer.document_name = document["filename"]
 
     log = models.QueryLog(
         user_id=current_user.id,
         conversation_id=convo.id,
         mode="ask",
-        question=payload.question,
+        question=title_seed,
         answer_title=answer.title,
         answer_body=answer.body,
         citations_json=json.dumps([c.model_dump() for c in answer.citations]),
@@ -291,8 +394,12 @@ def get_conversation(
 ):
     """Full thread, with each turn's original payload so a refreshed page
     renders the same citations and flags it showed live."""
+    # selectinload pulls the turns in the same trip. Without it the lazy
+    # relationship fires a second query the moment `.turns` is touched, which
+    # on a remote database is another full round trip.
     convo = (
         db.query(models.Conversation)
+        .options(selectinload(models.Conversation.turns))
         .filter(
             models.Conversation.id == conversation_id,
             models.Conversation.user_id == current_user.id,
@@ -357,6 +464,7 @@ def delete_conversation(
 async def upload_document(
     file: UploadFile = File(...),
     note: str | None = Form(None),
+    matter_id: int | None = Form(None),
     db: Session = Depends(get_db),
     current_user: models.User = Depends(get_current_user),
 ):
@@ -385,8 +493,22 @@ async def upload_document(
         logger.error("Upload failed for user %s: %s", current_user.id, exc)
         raise HTTPException(status_code=503, detail="Could not store that file. Please try again.")
 
+    # Only file it under a matter the caller actually owns.
+    if matter_id is not None:
+        owns = (
+            db.query(models.Matter)
+            .filter(
+                models.Matter.id == matter_id,
+                models.Matter.user_id == current_user.id,
+            )
+            .first()
+        )
+        if not owns:
+            raise HTTPException(status_code=404, detail="Matter not found.")
+
     doc = models.Document(
         user_id=current_user.id,
+        matter_id=matter_id,
         filename=storage.safe_name(file.filename),
         storage_path=path,
         content_type=file.content_type,
@@ -482,7 +604,7 @@ async def kanoon_doc(docid: str, current_user: models.User = Depends(get_current
 # ---------------- Drafting & review ----------------
 
 @app.get("/draft/types")
-def draft_types(current_user: models.User = Depends(get_current_user)):
+def draft_types(current_user: models.User = Depends(require_advocate)):
     """Catalogue of document types the drafting agent can produce."""
     return drafting.list_types()
 
@@ -490,7 +612,7 @@ def draft_types(current_user: models.User = Depends(get_current_user)):
 @app.post("/draft", response_model=schemas.DraftResponse)
 async def create_draft(
     payload: schemas.DraftRequest,
-    current_user: models.User = Depends(get_current_user),
+    current_user: models.User = Depends(require_advocate),
 ):
     if not payload.instructions.strip():
         raise HTTPException(status_code=400, detail="Describe what you need drafted.")
@@ -511,38 +633,73 @@ async def create_draft(
     return result
 
 
+@app.get("/arguments/sides")
+def argument_sides(current_user: models.User = Depends(require_advocate)):
+    """The parties an advocate can appear for. Advocate-only, like the tool."""
+    return arguments.list_sides()
+
+
+@app.post("/arguments", response_model=schemas.ArgumentsResponse)
+async def generate_arguments(
+    payload: schemas.ArgumentsRequest,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(require_advocate),
+):
+    """Build arguments, the opposing case, and rebuttals for one side.
+
+    Advocate-only: this produces advocacy, not the neutral legal information
+    the Ask surface gives. A general user asking "what should I argue" should
+    be talking to a lawyer, not to this.
+    """
+    facts = (payload.facts or "").strip()
+    document_name = None
+
+    if payload.document_id:
+        doc, doc_text = await _load_document(db, payload.document_id, current_user)
+        await _gate_document(doc_text, doc.filename)
+        document_name = doc.filename
+        # Typed facts lead - they are the advocate's framing of the matter,
+        # and the document is the raw material behind it.
+        facts = f"{facts}\n\n---\n\n{doc_text}".strip() if facts else doc_text
+
+    if not facts:
+        raise HTTPException(
+            status_code=400,
+            detail="Describe the facts of the matter, or attach the case document.",
+        )
+
+    try:
+        return await arguments.generate(
+            facts=facts,
+            side=payload.side,
+            issue=payload.issue,
+            court=payload.court,
+            state=payload.state or current_user.state,
+            document_name=document_name,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+    except Exception as exc:
+        logger.exception("Argument generation failed: %s", exc)
+        raise HTTPException(
+            status_code=503,
+            detail="Could not generate arguments for that matter. Try again.",
+        )
+
+
 @app.post("/review", response_model=schemas.ReviewResponse)
 async def review_document(
     payload: schemas.ReviewRequest,
     db: Session = Depends(get_db),
-    current_user: models.User = Depends(get_current_user),
+    current_user: models.User = Depends(require_advocate),
 ):
     """Red-line a counterparty's document. Accepts raw text or an uploaded file id."""
     text = (payload.document_text or "").strip()
+    filename = None
 
     if payload.document_id and not text:
-        doc = (
-            db.query(models.Document)
-            .filter(
-                models.Document.id == payload.document_id,
-                models.Document.user_id == current_user.id,   # ownership check
-            )
-            .first()
-        )
-        if not doc:
-            raise HTTPException(status_code=404, detail="Document not found.")
-
-        try:
-            url = await storage.signed_url(doc.storage_path, expires_in=120)
-            async with httpx.AsyncClient(timeout=60.0) as client:
-                blob = await client.get(url)
-                blob.raise_for_status()
-            text = drafting.extract_text(blob.content, doc.content_type, doc.filename)
-        except ValueError as exc:
-            raise HTTPException(status_code=400, detail=str(exc))
-        except Exception as exc:
-            logger.exception("Could not read stored document %s: %s", doc.id, exc)
-            raise HTTPException(status_code=503, detail="Could not read that document.")
+        doc, text = await _load_document(db, payload.document_id, current_user)
+        filename = doc.filename
 
     if not text:
         raise HTTPException(
@@ -550,8 +707,18 @@ async def review_document(
             detail="Provide document_text, or a document_id of a file you uploaded.",
         )
 
+    # Same gate as /ask. Pasted text goes through it too - a chemistry lab
+    # report is no more reviewable for pasting it in by hand.
+    await _gate_document(text, filename or "")
+
     try:
-        return await drafting.review(text, payload.doc_type, payload.context)
+        result = await drafting.review(text, payload.doc_type, payload.context)
+        if filename:
+            if isinstance(result, dict):
+                result["document_name"] = filename
+            else:
+                result.document_name = filename
+        return result
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
     except Exception as exc:

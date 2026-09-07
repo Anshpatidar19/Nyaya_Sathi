@@ -16,7 +16,9 @@ than /signup, so users can log in immediately without an email round-trip.
 Flip CONFIRM_EMAIL to False->True only if you add a real confirmation flow.
 """
 
+import asyncio
 import logging
+import time
 from typing import Any, Dict, Optional
 
 import httpx
@@ -220,29 +222,110 @@ async def sign_in(email: str, password: str) -> Dict[str, Any]:
 # Token validation
 # ---------------------------------------------------------------------------
 
+# --- token validation cache ------------------------------------------------
+# Every authenticated request was making a round trip to Supabase, over a
+# fresh TLS connection, just to ask who the caller was. On a page that fires
+# four requests that is four handshakes and four round trips before any work
+# starts - which is what made Matters and the chat history feel slow.
+#
+# The cache holds a verified token for a minute. Access tokens are valid for
+# an hour anyway, so a 60-second window narrows the revocation gap to almost
+# nothing while removing nearly all the latency.
+_TOKEN_TTL = 60.0        # seconds a good token is trusted without re-checking
+_NEGATIVE_TTL = 5.0      # a rejected token is remembered only briefly
+_CACHE_MAX = 512
+
+# token -> (expires_at, user or None)
+_token_cache: Dict[str, tuple] = {}
+
+# One client, reused. A new AsyncClient per call means a new TLS handshake
+# per call, which on a connection to another continent is most of the cost.
+_client: Optional[httpx.AsyncClient] = None
+
+
+def _shared_client() -> httpx.AsyncClient:
+    global _client
+    if _client is None or _client.is_closed:
+        _client = httpx.AsyncClient(
+            timeout=TIMEOUT,
+            limits=httpx.Limits(max_keepalive_connections=10, max_connections=20),
+        )
+    return _client
+
+
+def _cache_get(token: str) -> Optional[tuple]:
+    hit = _token_cache.get(token)
+    if not hit:
+        return None
+    if time.monotonic() > hit[0]:
+        _token_cache.pop(token, None)
+        return None
+    return hit
+
+
+def _cache_put(token: str, user: Optional[Dict[str, Any]]) -> None:
+    if len(_token_cache) > _CACHE_MAX:
+        # Cheap eviction: drop anything already expired, then the oldest.
+        now = time.monotonic()
+        for k in [k for k, v in _token_cache.items() if v[0] < now]:
+            _token_cache.pop(k, None)
+        while len(_token_cache) > _CACHE_MAX:
+            _token_cache.pop(next(iter(_token_cache)), None)
+
+    ttl = _TOKEN_TTL if user else _NEGATIVE_TTL
+    _token_cache[token] = (time.monotonic() + ttl, user)
+
+
+def invalidate_token(access_token: str) -> None:
+    """Forget a cached token - call on logout or password change."""
+    _token_cache.pop(access_token, None)
+
+
+# A page load fires several requests at once. Without this they all miss the
+# empty cache simultaneously and all make the same call. The first one now
+# does the work; the rest await its result.
+_inflight: Dict[str, "asyncio.Future"] = {}
+
+
+async def _fetch_user(access_token: str) -> Optional[Dict[str, Any]]:
+    try:
+        resp = await _shared_client().get(
+            f"{_base()}/user",
+            headers={
+                "apikey": settings.supabase_anon_key,
+                "Authorization": f"Bearer {access_token}",
+            },
+        )
+    except httpx.HTTPError as exc:
+        logger.warning("Auth check failed to reach Supabase: %s", exc)
+        return None   # not cached - a network blip shouldn't lock the user out
+
+    user = resp.json() if resp.status_code == 200 else None
+    _cache_put(access_token, user)
+    return user
+
+
 async def get_user(access_token: str) -> Optional[Dict[str, Any]]:
     """Validate a Supabase access token. Returns the user, or None if invalid.
 
     Asking GoTrue directly rather than verifying the JWT locally means we
     don't have to care whether the project signs with a shared secret or an
-    asymmetric key, and revoked tokens stop working immediately.
+    asymmetric key, and revoked tokens stop working within the cache window.
     """
-    try:
-        async with httpx.AsyncClient(timeout=TIMEOUT) as client:
-            resp = await client.get(
-                f"{_base()}/user",
-                headers={
-                    "apikey": settings.supabase_anon_key,
-                    "Authorization": f"Bearer {access_token}",
-                },
-            )
-    except httpx.HTTPError as exc:
-        logger.warning("Auth check failed to reach Supabase: %s", exc)
-        return None
+    cached = _cache_get(access_token)
+    if cached:
+        return cached[1]
 
-    if resp.status_code != 200:
-        return None
-    return resp.json()
+    existing = _inflight.get(access_token)
+    if existing is not None:
+        return await asyncio.shield(existing)
+
+    task = asyncio.ensure_future(_fetch_user(access_token))
+    _inflight[access_token] = task
+    try:
+        return await asyncio.shield(task)
+    finally:
+        _inflight.pop(access_token, None)
 
 
 # ---------------------------------------------------------------------------
@@ -260,3 +343,31 @@ async def list_users(page: int = 1, per_page: int = 200) -> list:
         raise AuthError(_message(resp, "Could not list users."), resp.status_code)
     data = resp.json()
     return data.get("users", data if isinstance(data, list) else [])
+
+async def update_password(access_token: str, new_password: str) -> None:
+    """Set a new password using a recovery token from the reset email.
+
+    GoTrue's recovery link carries a short-lived access token in the URL
+    fragment. Exchanging it here rather than in the browser keeps the anon
+    key and the raw token out of our frontend's network log.
+    """
+    async with httpx.AsyncClient(timeout=TIMEOUT) as client:
+        resp = await client.put(
+            f"{_base()}/user",
+            headers={
+                "apikey": settings.supabase_anon_key,
+                "Authorization": f"Bearer {access_token}",
+                "Content-Type": "application/json",
+            },
+            json={"password": new_password},
+        )
+
+    if resp.status_code >= 400:
+        msg = _message(resp, "Could not update the password.").lower()
+        if "expired" in msg or "invalid" in msg or resp.status_code == 401:
+            raise AuthError(
+                "That reset link has expired or has already been used. "
+                "Request a new one.",
+                400,
+            )
+        raise AuthError(_message(resp, "Could not update the password."), resp.status_code)

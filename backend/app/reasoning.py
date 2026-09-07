@@ -14,7 +14,7 @@ import logging
 import re
 from typing import Any, Dict, List, Optional
 
-from . import gemini, kanoon, routing, statutes
+from . import gemini, kanoon, routing, statutes, validity
 from .config import settings
 from .schemas import AskResponse, Citation
 
@@ -102,6 +102,55 @@ def refine_query(question: str, state: Optional[str]) -> str:
     return query[:400]
 
 
+# Sections and acts named inside an uploaded document. A notice that cites
+# "Section 138 of the Negotiable Instruments Act" tells us exactly what to
+# retrieve - far better than guessing from "explain this".
+_DOC_CITE_RE = re.compile(
+    r"\b(?:section|sec\.?|s\.)\s*(\d+[A-Za-z-]*)"
+    r"(?:\s*(?:of|,)?\s*(?:the\s+)?([A-Z][A-Za-z ]{4,60}?(?:Act|Sanhita|Code|Adhiniyam)))?",
+    re.IGNORECASE,
+)
+
+_DOC_ACT_RE = re.compile(
+    r"\b([A-Z][A-Za-z]+(?:\s+[A-Z][A-Za-z]+){0,5}\s+"
+    r"(?:Act|Sanhita|Code|Adhiniyam|Rules|Regulations))(?:,?\s*(\d{4}))?"
+)
+
+
+def document_query(text: str, limit: int = 6) -> str:
+    """Pull the legal anchors out of a document to drive retrieval.
+
+    Retrieval on the raw text is hopeless - a rent agreement is thousands of
+    words of boilerplate. The section and act references are the signal.
+    """
+    head = (text or "")[:6000]
+    terms: List[str] = []
+
+    for m in _DOC_CITE_RE.finditer(head):
+        section, act = m.group(1), (m.group(2) or "").strip()
+        terms.append(f"section {section} {act}".strip())
+        if len(terms) >= limit:
+            break
+
+    if len(terms) < limit:
+        for m in _DOC_ACT_RE.finditer(head):
+            act = m.group(1).strip()
+            if act and act not in terms:
+                terms.append(act)
+            if len(terms) >= limit:
+                break
+
+    # De-duplicate, keep order.
+    seen = set()
+    unique = []
+    for t in terms:
+        key = t.lower()
+        if key not in seen:
+            seen.add(key)
+            unique.append(t)
+    return " ".join(unique)[:400]
+
+
 # ---------------------------------------------------------------------------
 # Agent 2 - Retrieval
 # ---------------------------------------------------------------------------
@@ -154,18 +203,29 @@ async def retrieve(
     question: str,
     state: Optional[str],
     history: Optional[List[Dict[str, str]]] = None,
+    document: Optional[Dict[str, str]] = None,
 ) -> List[Dict[str, Any]]:
     """Bare acts first, then case law. Either source alone is enough to answer."""
+    # With a document attached, "explain this" carries no retrievable terms.
+    # The provisions the document itself names are what to look up.
+    doc_terms = document_query(document["text"]) if document and document.get("text") else ""
+    retrieval_text = f"{question} {doc_terms}".strip() if doc_terms else question
+
     # Act-level question ("tell me about BNS") - BM25 can't help, answer directly.
-    overview = statutes.act_overview(question)
-    statute_hits = [] if overview else statutes.search(question, limit=TOP_STATUTES)
+    overview = statutes.act_overview(retrieval_text)
+    statute_hits = [] if overview else statutes.search(retrieval_text, limit=TOP_STATUTES)
 
     if overview:
         sources = [statutes.overview_as_source(overview)]
     else:
         sources = [statutes.as_source(s) for s in statute_hits]
 
-    decision = routing.decide(question, statute_hits, overview)
+    # Stamp each statute chunk with whether it is still law. Done here, once,
+    # so every downstream consumer - synthesis, citation cards, the grounding
+    # assessment - sees the same status.
+    validity.annotate(sources)
+
+    decision = routing.decide(retrieval_text, statute_hits, overview)
 
     if not decision.call_kanoon:
         logger.info("Kanoon skipped (%s) - saved ~%d calls", decision.reason, 1 + 2)
@@ -173,7 +233,7 @@ async def retrieve(
 
     logger.info("Kanoon called (%s)", decision.reason)
 
-    query = refine_query(question, None)   # state goes in the court filter now
+    query = refine_query(retrieval_text, None)   # state goes in the court filter now
     try:
         results = await kanoon.search(query, state=state)
     except Exception as exc:
@@ -201,17 +261,22 @@ async def run_live_pipeline(
     question: str,
     state: str | None,
     history: Optional[List[Dict[str, str]]] = None,
+    document: Optional[Dict[str, str]] = None,
 ) -> AskResponse | None:
     """Retrieval -> Synthesis -> Internal Validator."""
     if not settings.gemini_api_key:
         return None
 
-    sources = await retrieve(question, state, history)
-    if not sources:
+    sources = await retrieve(question, state, history, document)
+
+    # With a document attached, an empty source list is survivable: the
+    # document itself is the material to explain. Without one, there is
+    # nothing to ground an answer in and we should not invent it.
+    if not sources and not document:
         return None
 
     try:
-        draft = await gemini.synthesize(question, state, sources, history)
+        draft = await gemini.synthesize(question, state, sources, history, document)
     except gemini.GeminiError as exc:
         logger.warning("Gemini synthesis failed: %s", exc)
         return None
@@ -224,8 +289,15 @@ async def run_live_pipeline(
         return None
 
     # --- Internal validator ---
+    # Skipped when a document is attached: the validator checks claims against
+    # retrieved sources, and most of a document explanation is grounded in the
+    # document instead. Running it here flags correct answers as unsupported.
     try:
-        verdict = await gemini.validate(question, draft, sources)
+        verdict = (
+            {"grounded": True, "issues": [], "revised_body": ""}
+            if document
+            else await gemini.validate(question, draft, sources)
+        )
         if not verdict["grounded"]:
             logger.info("Validator flagged answer: %s", verdict["issues"])
             if verdict["revised_body"]:
@@ -271,11 +343,32 @@ async def run_live_pipeline(
     if needs_support(question):
         next_steps.extend(_SUPPORT_STEPS)
 
+    # How well supported this answer actually is. Derived from what retrieval
+    # returned and what the prose cites - never asked of the model, which
+    # would happily rate a hallucinated citation at 85%.
+    grounding = validity.assess(
+        body=body,
+        sources=sources,
+        citations=[c.model_dump() for c in citations],
+        used_sources=used,
+    )
+
+    # A repealed provision in the sources is worth saying out loud, not just
+    # badging - an advocate acting on IPC 302 in 2026 has a real problem.
+    for s_ in sources:
+        v = s_.get("validity") or {}
+        if v.get("status") == validity.REPEALED and v.get("note"):
+            note = f"{s_.get('act_short', '')} {s_.get('section', '')}: {v['note']}".strip()
+            if note not in next_steps:
+                next_steps.insert(0, note)
+            break
+
     return AskResponse(
         title=draft["title"],
         body=body,
         citations=citations,
         next_steps=next_steps,
+        grounding=grounding,
     )
 
 
@@ -283,8 +376,14 @@ async def answer_question(
     question: str,
     state: str | None = None,
     history: Optional[List[Dict[str, str]]] = None,
+    document: Optional[Dict[str, str]] = None,
 ) -> AskResponse:
-    live = await run_live_pipeline(question, state, history)
+    """Answer a question, optionally about an attached document.
+
+    `document` is {"filename": str, "text": str} and must already have passed
+    the scope gate in doc_scope - this layer trusts that it is legal material.
+    """
+    live = await run_live_pipeline(question, state, history, document)
     if live is not None:
         return live
 
