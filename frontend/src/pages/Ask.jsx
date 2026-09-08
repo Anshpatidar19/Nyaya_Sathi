@@ -7,6 +7,9 @@ import ArgumentsSetup from '../components/ArgumentsSetup';
 import DocTypeSelect from '../components/DocTypeSelect';
 import {
   askQuestion,
+  askQuestionStream,
+  translateAnswer,
+  translateText,
   createDraft,
   deleteConversation,
   fetchConversation,
@@ -293,6 +296,10 @@ export default function Ask() {
           kind: t.mode || 'ask',
           prompt: t.question,
           ...(t.payload || { title: t.answer_title, body: t.answer_body, citations: [], next_steps: [] }),
+          // The stored payload predates translation and has no query_log_id
+          // of its own, so it comes from the turn row. Spread last, or an
+          // older payload would leave a reloaded answer untranslatable.
+          query_log_id: t.id,
         }))
       );
       localStorage.setItem(STORAGE_KEY, String(data.id));
@@ -413,12 +420,40 @@ export default function Ask() {
     try {
       let turn;
       if (mode === 'ask') {
-        const data = await askQuestion(token, {
-          question: prompt,
-          state: user?.state,
-          conversation_id: conversationId,
-          document_id: sentFile?.id,
-        });
+        // The pending turn becomes the answer in place: text lands in it as
+        // it streams, then the finished payload replaces it wholesale. The
+        // reader never sees the card jump.
+        //
+        // Always the last turn - submit is gated on `loading`, so nothing
+        // else can be appended while this one is streaming. Indexing from the
+        // end avoids holding a stale position across re-renders.
+        const patchLast = (fn) =>
+          setTurns((t) => {
+            if (!t.length) return t;
+            const next = [...t];
+            next[next.length - 1] = fn(next[next.length - 1]);
+            return next;
+          });
+
+        patchLast((turn0) => ({ ...turn0, kind: 'streaming', body: '' }));
+
+        const append = (text) =>
+          patchLast((turn0) => ({ ...turn0, body: (turn0.body || '') + text }));
+
+        const replace = (body) =>
+          patchLast((turn0) => ({ ...turn0, body, revised: true }));
+
+        const data = await askQuestionStream(
+          token,
+          {
+            question: prompt,
+            state: user?.state,
+            conversation_id: conversationId,
+            document_id: sentFile?.id,
+          },
+          { onDelta: append, onRevised: replace },
+        );
+
         if (data.conversation_id) {
           setConversationId(data.conversation_id);
           localStorage.setItem(STORAGE_KEY, String(data.conversation_id));
@@ -791,13 +826,18 @@ export default function Ask() {
                       <div className="ask-thinking">
                         <span className="spinner" /> Thinking through this…
                       </div>
+                    ) : t.kind === 'streaming' ? (
+                      <StreamingAnswer body={t.body} />
                     ) : (
                       <>
-                        {t.kind === 'ask' && <AskResult data={t} />}
+                        {t.kind === 'ask' && <AskResult data={t} token={token} />}
                         {t.kind === 'draft' && (
                           <DraftResult
                             data={t}
-                            onCopy={() => copyDraft(t.body, i)}
+                            token={token}
+                            // The visible text, not the English original - a
+                            // Tamil draft copied as English is a bug.
+                            onCopy={(text) => copyDraft(text ?? t.body, i)}
                             copied={copiedIdx === i}
                           />
                         )}
@@ -905,22 +945,118 @@ function Grounding({ data }) {
   );
 }
 
-function AskResult({ data }) {
+/* The answer mid-flight. Deliberately plain: citations, next steps and the
+   grounding badge are genuinely not known until the answer is finished and
+   validated, so showing placeholders for them would be a lie. */
+function StreamingAnswer({ body }) {
+  return (
+    <div className="demo-card">
+      <div className="demo-topbar">
+        <div className="demo-brand"><span className="sq">न्या</span> Research</div>
+        <span className="ground-pill"><span className="spinner" /> Writing…</span>
+      </div>
+      {(body || '').split(/\n{2,}/).map((p, i) => (
+        <p className="answer-body" key={i}>{p}</p>
+      ))}
+    </div>
+  );
+}
+
+/* The languages the answer can be rendered in. The interface itself stays in
+   English throughout - this switches the generated prose only, which is the
+   part the reader actually needs in their own language. Act names and section
+   numbers stay in English inside every one of them: they are identifiers a
+   person types into a search box or hands to a court clerk. */
+const LANGUAGES = [
+  { code: 'en', native: 'English' },
+  { code: 'hi', native: 'हिन्दी' },
+  { code: 'mr', native: 'मराठी' },
+  { code: 'ta', native: 'தமிழ்' },
+  { code: 'te', native: 'తెలుగు' },
+  { code: 'kn', native: 'ಕನ್ನಡ' },
+];
+
+/* Switches one answer between languages. Each rendering is kept once fetched,
+   so going back to a language already seen is instant - no second call, no
+   spinner. The English text is never discarded: it is what the validator
+   passed and what the grounding badge was computed against. */
+function LanguageBar({ active, busy, onPick }) {
+  return (
+    <div className="lang-bar">
+      {LANGUAGES.map((l) => (
+        <button
+          type="button"
+          key={l.code}
+          className={`lang-pill${l.code === active ? ' is-active' : ''}`}
+          disabled={busy}
+          onClick={() => onPick(l.code)}
+        >
+          {l.native}
+        </button>
+      ))}
+      {busy && <span className="lang-busy"><span className="spinner" /> translating…</span>}
+    </div>
+  );
+}
+
+function AskResult({ data, token }) {
+  const [lang, setLang] = useState('en');
+  const [busy, setBusy] = useState(false);
+  const [failed, setFailed] = useState('');
+  // Renderings already fetched, so switching back costs nothing. Seeded with
+  // the English original, which is never refetched or overwritten.
+  const [versions, setVersions] = useState({
+    en: { title: data.title, body: data.body, next_steps: data.next_steps || [] },
+  });
+
+  const turnId = data.query_log_id;
+  const shown = versions[lang] || versions.en;
+
+  async function pick(code) {
+    setFailed('');
+    if (code === lang || busy) return;
+    if (versions[code]) { setLang(code); return; }   // already have it
+    if (!turnId) { setFailed("This answer can't be translated."); return; }
+
+    setBusy(true);
+    try {
+      const r = await translateAnswer(token, { query_log_id: turnId, language: code });
+      setVersions((v) => ({
+        ...v,
+        [code]: { title: r.title, body: r.body, next_steps: r.next_steps || [] },
+      }));
+      setLang(code);
+    } catch {
+      // The English answer stays on screen - a failed translation should
+      // never leave the reader with nothing.
+      setFailed('That translation could not be produced. Showing English.');
+    } finally {
+      setBusy(false);
+    }
+  }
+
   return (
     <div className="demo-card">
       <div className="demo-topbar">
         <div className="demo-brand"><span className="sq">न्या</span> Research</div>
         <Grounding data={data.grounding} />
       </div>
-      <h4 className="answer-title">{data.title}</h4>
-      {(data.body || '').split(/\n{2,}/).map((p, i) => (
+      <h4 className="answer-title">{shown.title}</h4>
+      {(shown.body || '').split(/\n{2,}/).map((p, i) => (
         <p className="answer-body" key={i}>{p}</p>
       ))}
+
+      <LanguageBar active={lang} busy={busy} onPick={pick} />
+      {failed && <p className="lang-error">{failed}</p>}
+
+      {/* Sources stay in English in every language: these are the actual
+          titles of the judgments and sections, and a translated case name
+          cannot be looked up. */}
       <Citations items={data.citations} />
-      {data.next_steps?.length > 0 && (
+      {shown.next_steps?.length > 0 && (
         <div className="demo-steps">
           <div className="label">Suggested next steps</div>
-          {data.next_steps.map((s, i) => (
+          {shown.next_steps.map((s, i) => (
             <div className="step-row" key={i}><span className="num">{i + 1}</span> {s}</div>
           ))}
         </div>
@@ -939,12 +1075,36 @@ function AskResult({ data }) {
   );
 }
 
-function DraftResult({ data, onCopy, copied }) {
+function DraftResult({ data, onCopy, copied, token }) {
+  const [lang, setLang] = useState('en');
+  const [busy, setBusy] = useState(false);
+  const [failed, setFailed] = useState('');
+  const [versions, setVersions] = useState({ en: data.body });
+
+  const shown = versions[lang] ?? versions.en;
+
+  async function pick(code) {
+    setFailed('');
+    if (code === lang || busy) return;
+    if (versions[code] !== undefined) { setLang(code); return; }
+
+    setBusy(true);
+    try {
+      const r = await translateText(token, { text: data.body, language: code });
+      setVersions((v) => ({ ...v, [code]: r.body }));
+      setLang(code);
+    } catch {
+      setFailed('That translation could not be produced. Showing English.');
+    } finally {
+      setBusy(false);
+    }
+  }
+
   return (
     <div className="demo-card">
       <div className="demo-topbar">
         <div className="demo-brand"><span className="sq">न्या</span> Draft</div>
-        <button type="button" className="copy-btn" onClick={onCopy}>
+        <button type="button" className="copy-btn" onClick={() => onCopy(shown)}>
           {copied ? 'Copied' : 'Copy text'}
         </button>
       </div>
@@ -957,7 +1117,12 @@ function DraftResult({ data, onCopy, copied }) {
       )}
 
       <h4 className="answer-title">{data.title}</h4>
-      <pre className="draft-body">{data.body}</pre>
+      <pre className="draft-body">{shown}</pre>
+
+      {/* Clause numbering, blanks and placeholders survive the translation -
+          a draft that loses its structure is not a draft any more. */}
+      <LanguageBar active={lang} busy={busy} onPick={pick} />
+      {failed && <p className="lang-error">{failed}</p>}
 
       {data.missing_information?.length > 0 && (
         <div className="demo-steps missing">

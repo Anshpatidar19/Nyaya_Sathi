@@ -109,12 +109,37 @@ def _headers() -> Dict[str, str]:
     return {"Authorization": f"Token {settings.indian_kanoon_api_token}"}
 
 
+# One client for the process, not one per call. Each `async with
+# httpx.AsyncClient()` opens a fresh TCP connection and repeats the TLS
+# handshake - roughly 200-400ms to a remote host, paid on every search and
+# every fragment fetch. Keeping the pool alive amortises that to zero after
+# the first call.
+_client: Optional[httpx.AsyncClient] = None
+
+
+def _get_client() -> httpx.AsyncClient:
+    global _client
+    if _client is None or _client.is_closed:
+        _client = httpx.AsyncClient(
+            timeout=KANOON_TIMEOUT,
+            limits=httpx.Limits(max_keepalive_connections=10, max_connections=20),
+        )
+    return _client
+
+
+async def close_client() -> None:
+    """Called from the FastAPI shutdown hook."""
+    global _client
+    if _client is not None and not _client.is_closed:
+        await _client.aclose()
+    _client = None
+
+
 async def _post(path: str, params: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     url = f"{settings.indian_kanoon_base_url}{path}"
-    async with httpx.AsyncClient(timeout=KANOON_TIMEOUT) as client:
-        resp = await client.post(url, headers=_headers(), params=params or {})
-        resp.raise_for_status()
-        return resp.json()
+    resp = await _get_client().post(url, headers=_headers(), params=params or {})
+    resp.raise_for_status()
+    return resp.json()
 
 
 # ---------------------------------------------------------------------------

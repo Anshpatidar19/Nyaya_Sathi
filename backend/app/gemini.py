@@ -22,7 +22,7 @@ module has to handle explicitly:
 import json
 import logging
 import re
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, AsyncIterator, Dict, List, Optional, Tuple
 
 import httpx
 
@@ -56,18 +56,50 @@ class GeminiTruncated(GeminiError):
 # Low-level call
 # --------------------------------------------------------------------------
 
-def _extract_text(candidate: Dict[str, Any]) -> str:
+# One client for the process. A fresh AsyncClient per call means a new TLS
+# handshake to generativelanguage.googleapis.com every time - paid twice per
+# answer, since synthesis and validation are separate calls.
+_client: Optional[httpx.AsyncClient] = None
+
+
+def _get_client() -> httpx.AsyncClient:
+    global _client
+    if _client is None or _client.is_closed:
+        _client = httpx.AsyncClient(
+            timeout=GEMINI_TIMEOUT,
+            limits=httpx.Limits(max_keepalive_connections=10, max_connections=20),
+        )
+    return _client
+
+
+async def close_client() -> None:
+    """Called from the FastAPI shutdown hook."""
+    global _client
+    if _client is not None and not _client.is_closed:
+        await _client.aclose()
+    _client = None
+
+
+def _extract_text(candidate: Dict[str, Any], strip: bool = True) -> str:
     """Join the answer parts, skipping the model's own reasoning.
 
     Thinking models return their scratchpad as parts flagged {"thought": true}.
     Those are prose, not JSON, and concatenating them corrupts the payload.
+
+    strip=False for streaming. A stream calls this once per chunk, and
+    stripping each chunk deletes any space that happens to fall on a chunk
+    boundary - which reads as words run together ("mustfirst", "Ifyou") in
+    the finished answer, since the accumulated buffer is what gets parsed.
+    Stripping the whole response once at the end is correct; stripping every
+    fragment of it is not.
     """
     parts = candidate.get("content", {}).get("parts", []) or []
-    return "".join(
+    joined = "".join(
         p.get("text", "")
         for p in parts
         if isinstance(p, dict) and not p.get("thought")
-    ).strip()
+    )
+    return joined.strip() if strip else joined
 
 
 async def _generate_raw(
@@ -97,34 +129,34 @@ async def _generate_raw(
         "generationConfig": generation_config,
     }
 
-    async with httpx.AsyncClient(timeout=GEMINI_TIMEOUT) as client:
-        resp = await client.post(
-            url,
-            params={"key": settings.gemini_api_key},
-            json=payload,
-            headers={"Content-Type": "application/json"},
-        )
+    client = _get_client()
+    resp = await client.post(
+        url,
+        params={"key": settings.gemini_api_key},
+        json=payload,
+        headers={"Content-Type": "application/json"},
+    )
 
-        # Not every model in the family accepts thinkingConfig. If that is
-        # what it objected to, drop the field and go again rather than
-        # failing the whole request over a knob.
-        if resp.status_code == 400 and "thinkingConfig" in generation_config:
-            if "thinking" in resp.text.lower():
-                logger.warning(
-                    "Model %s rejected thinkingConfig; retrying without it.",
-                    settings.gemini_model,
-                )
-                generation_config.pop("thinkingConfig")
-                resp = await client.post(
-                    url,
-                    params={"key": settings.gemini_api_key},
-                    json=payload,
-                    headers={"Content-Type": "application/json"},
-                )
+    # Not every model in the family accepts thinkingConfig. If that is
+    # what it objected to, drop the field and go again rather than
+    # failing the whole request over a knob.
+    if resp.status_code == 400 and "thinkingConfig" in generation_config:
+        if "thinking" in resp.text.lower():
+            logger.warning(
+                "Model %s rejected thinkingConfig; retrying without it.",
+                settings.gemini_model,
+            )
+            generation_config.pop("thinkingConfig")
+            resp = await client.post(
+                url,
+                params={"key": settings.gemini_api_key},
+                json=payload,
+                headers={"Content-Type": "application/json"},
+            )
 
-        if resp.status_code >= 400:
-            raise GeminiError(f"Gemini API error {resp.status_code}: {resp.text[:400]}")
-        data = resp.json()
+    if resp.status_code >= 400:
+        raise GeminiError(f"Gemini API error {resp.status_code}: {resp.text[:400]}")
+    data = resp.json()
 
     try:
         candidate = data["candidates"][0]
@@ -134,6 +166,19 @@ async def _generate_raw(
 
     finish_reason = str(candidate.get("finishReason") or "UNKNOWN")
     text = _extract_text(candidate)
+
+    # thoughtsTokenCount is the question this logging exists to answer: a
+    # thinkingBudget of 0 is accepted by the API but not always honoured, and
+    # thinking tokens are generated before any answer appears. If this is
+    # non-zero, most of the wait is reasoning the user never sees.
+    usage = data.get("usageMetadata") or {}
+    logger.info(
+        "GEMINI in=%s out=%s thoughts=%s finish=%s",
+        usage.get("promptTokenCount"),
+        usage.get("candidatesTokenCount"),
+        usage.get("thoughtsTokenCount", 0),
+        finish_reason,
+    )
 
     if not text:
         usage = data.get("usageMetadata", {})
@@ -310,6 +355,138 @@ async def generate_json(
 
 
 # --------------------------------------------------------------------------
+# Streaming
+# --------------------------------------------------------------------------
+# The answer is JSON, but the user only ever reads one field of it. Rather
+# than waiting for the whole object to close, we pull the "body" string out
+# of the partial JSON as it arrives and emit the new characters. Everything
+# else - title, used_sources, next_steps - is parsed normally once the
+# stream finishes, which is also when it is actually needed.
+
+_BODY_KEY_RE = re.compile(r'"body"\s*:\s*"')
+
+_ESCAPES = {
+    "n": "\n", "t": "\t", "r": "\r", "b": "\b",
+    "f": "\f", '"': '"', "\\": "\\", "/": "/",
+}
+
+
+def _partial_body(raw: str) -> str:
+    """Decode as much of the "body" string as has arrived.
+
+    Recomputed from the whole buffer on each chunk rather than kept as
+    incremental state: a chunk can split a unicode escape down the middle,
+    and re-deriving is simpler than resuming mid-escape.
+    """
+    m = _BODY_KEY_RE.search(raw)
+    if not m:
+        return ""
+
+    out: List[str] = []
+    i = m.end()
+    n = len(raw)
+    while i < n:
+        ch = raw[i]
+        if ch == "\\":
+            if i + 1 >= n:
+                break                      # escape split across chunks
+            nxt = raw[i + 1]
+            if nxt == "u":
+                if i + 5 >= n + 1 or i + 6 > n:
+                    break
+                try:
+                    out.append(chr(int(raw[i + 2:i + 6], 16)))
+                except ValueError:
+                    pass
+                i += 6
+                continue
+            out.append(_ESCAPES.get(nxt, nxt))
+            i += 2
+            continue
+        if ch == '"':
+            break                          # body closed
+        out.append(ch)
+        i += 1
+    return "".join(out)
+
+
+async def _stream_raw(
+    prompt: str,
+    system_instruction: str,
+    temperature: float = 0.2,
+    max_output_tokens: int = 2048,
+    thinking_budget: Optional[int] = DEFAULT_THINKING_BUDGET,
+) -> AsyncIterator[Tuple[str, Any]]:
+    """Yield ("delta", new_text) as the body arrives, then ("raw", full_json).
+
+    The caller parses the final payload with the same _parse_json used by the
+    non-streaming path, so truncation repair and finishReason reporting behave
+    identically.
+    """
+    if not settings.gemini_api_key:
+        raise GeminiError("GEMINI_API_KEY is not set. Add it to backend/.env.")
+
+    url = f"{GEMINI_BASE}/models/{settings.gemini_model}:streamGenerateContent"
+
+    generation_config: Dict[str, Any] = {
+        "temperature": temperature,
+        "maxOutputTokens": max_output_tokens,
+        "responseMimeType": "application/json",
+    }
+    if thinking_budget is not None:
+        generation_config["thinkingConfig"] = {"thinkingBudget": thinking_budget}
+
+    payload: Dict[str, Any] = {
+        "systemInstruction": {"parts": [{"text": system_instruction}]},
+        "contents": [{"role": "user", "parts": [{"text": prompt}]}],
+        "generationConfig": generation_config,
+    }
+
+    buf = ""            # raw JSON accumulated so far
+    emitted = 0         # characters of body already sent
+    finish_reason = "UNKNOWN"
+
+    client = _get_client()
+    async with client.stream(
+        "POST",
+        url,
+        params={"key": settings.gemini_api_key, "alt": "sse"},
+        json=payload,
+        headers={"Content-Type": "application/json"},
+    ) as resp:
+        if resp.status_code >= 400:
+            detail = (await resp.aread())[:400]
+            raise GeminiError(f"Gemini API error {resp.status_code}: {detail!r}")
+
+        async for line in resp.aiter_lines():
+            if not line.startswith("data:"):
+                continue
+            chunk = line[5:].strip()
+            if not chunk or chunk == "[DONE]":
+                continue
+            try:
+                obj = json.loads(chunk)
+            except json.JSONDecodeError:
+                continue
+
+            try:
+                candidate = obj["candidates"][0]
+            except (KeyError, IndexError):
+                continue
+
+            finish_reason = str(candidate.get("finishReason") or finish_reason)
+            buf += _extract_text(candidate, strip=False)
+
+            body_so_far = _partial_body(buf)
+            if len(body_so_far) > emitted:
+                yield "delta", body_so_far[emitted:]
+                emitted = len(body_so_far)
+
+    logger.info("GEMINI stream chars=%d finish=%s", len(buf), finish_reason)
+    yield "raw", (buf.strip(), finish_reason)
+
+
+# --------------------------------------------------------------------------
 # Agent 3 - Synthesis
 # --------------------------------------------------------------------------
 
@@ -370,18 +547,18 @@ Return ONLY a JSON object with this exact shape:
 }"""
 
 
-async def synthesize(
+def _synthesis_prompt(
     question: str,
     state: Optional[str],
     sources: List[Dict[str, Any]],
     history: Optional[List[Dict[str, str]]] = None,
     document: Optional[Dict[str, str]] = None,
-) -> Dict[str, Any]:
-    """Turn retrieved material into a plain-language answer.
+) -> str:
+    """Build the synthesis prompt.
 
-    `history` carries earlier turns in the thread so follow-ups resolve -
-    "what about the deposit?" only means something next to the question
-    before it.
+    Shared by the buffered and streaming paths so the two can never drift
+    apart - a prompt change that only landed in one of them would give the
+    same question two different answers depending on the endpoint.
     """
     blocks = []
     for i, s in enumerate(sources, start=1):
@@ -419,7 +596,7 @@ async def synthesize(
             "-----\n\n"
         )
 
-    prompt = (
+    return (
         f"{prior}"
         f"{attached}"
         f"USER QUESTION: {question}{location}\n\n"
@@ -428,16 +605,15 @@ async def synthesize(
         + "\n\nWrite the plain-language answer now, as JSON."
     )
 
-    data = await generate_json(
-        prompt,
-        _SYNTHESIS_SYSTEM,
-        temperature=0.25,
-        # An attached document needs room to be explained properly.
-        # Fuller answers need room. A document explanation needs more
-        # again, since the document itself has to be worked through.
-        max_output_tokens=4000 if document else 3000,
-    )
 
+# An attached document needs room to be explained properly, since the document
+# itself has to be worked through on top of the law.
+def _synthesis_tokens(document: Optional[Dict[str, str]]) -> int:
+    return 4000 if document else 3000
+
+
+def _shape_draft(data: Dict[str, Any]) -> Dict[str, Any]:
+    """Normalise the model's JSON into the shape the pipeline expects."""
     used = data.get("used_sources") or []
     if not isinstance(used, list):
         used = []
@@ -447,6 +623,54 @@ async def synthesize(
         "used_sources": [int(n) for n in used if str(n).isdigit()],
         "next_steps": [str(s).strip() for s in (data.get("next_steps") or []) if str(s).strip()],
     }
+
+
+async def synthesize(
+    question: str,
+    state: Optional[str],
+    sources: List[Dict[str, Any]],
+    history: Optional[List[Dict[str, str]]] = None,
+    document: Optional[Dict[str, str]] = None,
+) -> Dict[str, Any]:
+    """Turn retrieved material into a plain-language answer."""
+    data = await generate_json(
+        _synthesis_prompt(question, state, sources, history, document),
+        _SYNTHESIS_SYSTEM,
+        temperature=0.25,
+        max_output_tokens=_synthesis_tokens(document),
+    )
+    return _shape_draft(data)
+
+
+async def synthesize_stream(
+    question: str,
+    state: Optional[str],
+    sources: List[Dict[str, Any]],
+    history: Optional[List[Dict[str, str]]] = None,
+    document: Optional[Dict[str, str]] = None,
+) -> AsyncIterator[Tuple[str, Any]]:
+    """Same answer as synthesize(), delivered as it is written.
+
+    Yields ("delta", text) for each new run of body characters, then
+    ("draft", dict) with the fully parsed answer. The draft is authoritative:
+    the deltas are the same characters, but the caller should use the parsed
+    body for anything it stores.
+    """
+    raw = ""
+    finish_reason = "UNKNOWN"
+
+    async for kind, value in _stream_raw(
+        _synthesis_prompt(question, state, sources, history, document),
+        _SYNTHESIS_SYSTEM,
+        temperature=0.25,
+        max_output_tokens=_synthesis_tokens(document),
+    ):
+        if kind == "delta":
+            yield "delta", value
+        else:
+            raw, finish_reason = value
+
+    yield "draft", _shape_draft(_parse_json(raw, finish_reason))
 
 
 # --------------------------------------------------------------------------
@@ -472,6 +696,15 @@ system can say, and stripping it leaves the reader worse off. The same goes for 
 naming the user's own state or city when suggesting where to get help - that is \
 practical signposting, not a legal claim.
 
+The NEXT STEPS are practical directions, not legal claims, and the source excerpts \
+are not expected to support them. Naming the forum, commission, tribunal, court, \
+police station, portal or office where a person goes to file - and saying to gather \
+documents, keep copies or check a deadline - is signposting. Never flag a next step \
+merely because the excerpts do not mention it. Apply rules 1 and 2 to the BODY.
+
+The user's own state is supplied to you below when it is known. It is a fact about \
+the user, not something the draft invented. Never flag the draft for naming it.
+
 What rule 2 is actually for: predicting that the user will win or lose, telling them \
 what to plead, or asserting that a provision applies to their facts when the sources \
 do not establish it.
@@ -479,38 +712,90 @@ do not establish it.
 Return ONLY a JSON object:
 {
   "grounded": true or false,
-  "issues": ["short description of each problem found"],
-  "revised_body": "if grounded is false, a corrected body that only states what the \
-sources support; otherwise an empty string"
+  "issues": ["short description of each problem found"]
 }"""
 
 
-async def validate(question: str, draft: Dict[str, Any], sources: List[Dict[str, Any]]) -> Dict[str, Any]:
+# Asked only when the check above fails - which is rare. Keeping the rewrite
+# in its own call means the common path never pays for the tokens.
+_REVISION_SYSTEM = """You are correcting a draft answer for a legal-information \
+system. You are given the user's question, the source excerpts, the draft, and the \
+problems found with it.
+
+Rewrite the body so it states only what the sources support. Keep everything that \
+was correct, keep the plain-language style, and keep any pointer to a lawyer or \
+legal aid. Remove or qualify only what the issues identify.
+
+Return ONLY a JSON object:
+{
+  "revised_body": "the corrected body"
+}"""
+
+
+# The validator only has to decide whether each claim is supported. It does not
+# need the full judgment to do that, and sending 6,000 characters per source
+# costs latency on every single answer.
+VALIDATOR_EXCERPT_CHARS = 2000
+
+
+async def validate(
+    question: str,
+    draft: Dict[str, Any],
+    sources: List[Dict[str, Any]],
+    state: Optional[str] = None,
+) -> Dict[str, Any]:
     blocks = []
     for i, s in enumerate(sources, start=1):
+        excerpt = (s.get("text") or s.get("snippet") or "(no text available)")
         blocks.append(
             f"[{i}] {s.get('title') or 'Untitled'} ({s.get('court') or 'Unknown'})\n"
-            f"    EXCERPT: {s.get('text') or s.get('snippet') or '(no text available)'}"
+            f"    EXCERPT: {excerpt[:VALIDATOR_EXCERPT_CHARS]}"
         )
 
+    # The synthesis agent is told the user's state, so the draft can legitimately
+    # name it. Withholding it here made the validator read a supplied fact as an
+    # invented one and burn a revision call correcting a correct answer.
+    location = f"USER'S STATE: {state}\n\n" if state else ""
+
     prompt = (
+        f"{location}"
         f"USER QUESTION: {question}\n\n"
         f"SOURCE EXCERPTS:\n\n" + "\n\n".join(blocks) + "\n\n"
         f"DRAFT ANSWER:\nTitle: {draft.get('title')}\nBody: {draft.get('body')}\n"
-        f"Next steps: {draft.get('next_steps')}\n\n"
+        f"Next steps (practical signposting - not subject to rules 1 and 2): "
+        f"{draft.get('next_steps')}\n\n"
         "Validate the draft now, as JSON."
     )
 
-    # A revised body can be as long as the draft it replaces, so the default
-    # 2048 is not enough headroom here.
+    # Pass one: verdict only. A pass/fail plus a short list of issues is a few
+    # hundred tokens, not three thousand - and it is what happens on almost
+    # every answer. Asking for the rewrite in the same breath made every clean
+    # answer wait for a revision that was never going to be used.
     data = await generate_json(
-        prompt, _VALIDATOR_SYSTEM, temperature=0.0, max_output_tokens=3000
+        prompt, _VALIDATOR_SYSTEM, temperature=0.0, max_output_tokens=600
     )
-    return {
-        "grounded": bool(data.get("grounded", True)),
-        "issues": [str(i) for i in (data.get("issues") or [])],
-        "revised_body": str(data.get("revised_body") or "").strip(),
-    }
+
+    grounded = bool(data.get("grounded", True))
+    issues = [str(i) for i in (data.get("issues") or [])]
+
+    if grounded or not issues:
+        return {"grounded": grounded, "issues": issues, "revised_body": ""}
+
+    # Pass two: only now is a rewrite worth paying for.
+    try:
+        fix = await generate_json(
+            prompt + "\n\nPROBLEMS FOUND:\n" + "\n".join(f"- {i}" for i in issues)
+            + "\n\nRewrite the body now, as JSON.",
+            _REVISION_SYSTEM,
+            temperature=0.0,
+            max_output_tokens=3000,
+        )
+        revised = str(fix.get("revised_body") or "").strip()
+    except GeminiError as exc:
+        logger.warning("Revision pass failed, caller will use its fallback: %s", exc)
+        revised = ""
+
+    return {"grounded": False, "issues": issues, "revised_body": revised}
 
 # --------------------------------------------------------------------------
 # Agent 5 - Document scope classifier

@@ -9,3 +9,4 @@ backend/.env
 backend/.venv/
 backend/venv/
 backend/.venv/
+*.bak

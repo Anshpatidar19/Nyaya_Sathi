@@ -65,6 +65,18 @@ class AskRequest(BaseModel):
     matter_id: Optional[int] = None
 
 
+class TranslateAnswerRequest(BaseModel):
+    """Re-render a stored answer. The English original is untouched."""
+    query_log_id: int
+    language: str = "en"
+
+
+class TranslateTextRequest(BaseModel):
+    """Translate a drafted document, structure preserved."""
+    text: str = Field(min_length=1, max_length=60000)
+    language: str = "en"
+
+
 class Grounding(BaseModel):
     """How well the answer is supported. Computed from retrieval and citation
     signals, not asked of the model."""
