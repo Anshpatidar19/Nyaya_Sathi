@@ -848,15 +848,22 @@ async def kanoon_doc(docid: str, current_user: models.User = Depends(get_current
 # ---------------- Drafting & review ----------------
 
 @app.get("/draft/types")
-def draft_types(current_user: models.User = Depends(require_advocate)):
-    """Catalogue of document types the drafting agent can produce."""
+def draft_types(current_user: models.User = Depends(get_current_user)):
+    """Catalogue of document types the drafting agent can produce.
+
+    Open to every logged-in account, not just advocates - most of these
+    (legal notices, RTI applications, rent agreements) are things an
+    ordinary person drafts for themselves. Types that genuinely need a
+    lawyer to settle before filing are flagged via `needs_advocate` instead
+    of hidden outright, so the frontend can warn rather than block.
+    """
     return drafting.list_types()
 
 
 @app.post("/draft", response_model=schemas.DraftResponse)
 async def create_draft(
     payload: schemas.DraftRequest,
-    current_user: models.User = Depends(require_advocate),
+    current_user: models.User = Depends(get_current_user),
 ):
     if not payload.instructions.strip():
         raise HTTPException(status_code=400, detail="Describe what you need drafted.")
@@ -935,9 +942,14 @@ async def generate_arguments(
 async def review_document(
     payload: schemas.ReviewRequest,
     db: Session = Depends(get_db),
-    current_user: models.User = Depends(require_advocate),
+    current_user: models.User = Depends(get_current_user),
 ):
-    """Red-line a counterparty's document. Accepts raw text or an uploaded file id."""
+    """Red-line a counterparty's document. Accepts raw text or an uploaded file id.
+
+    Open to every logged-in account. Anyone can be handed a rent agreement
+    or a notice to sign - they don't need to be an advocate to want the
+    risky clauses flagged before they do.
+    """
     text = (payload.document_text or "").strip()
     filename = None
 
