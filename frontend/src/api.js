@@ -122,6 +122,99 @@ export async function askQuestion(token, { question, state, conversation_id, doc
   return handle(res);
 }
 
+// Streams the answer as it is written. onDelta gets each new run of body
+// text, onRevised fires only when the validator replaced what was already
+// shown, and the promise resolves with the finished answer (citations,
+// grounding, next steps, conversation_id).
+//
+// fetch + ReadableStream rather than EventSource: EventSource cannot send an
+// Authorization header or a POST body, and both are needed here.
+export async function askQuestionStream(
+  token,
+  { question, state, conversation_id, document_id },
+  { onDelta, onRevised } = {},
+) {
+  const res = await fetch(`${BASE_URL}/ask/stream`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify({ question, state, conversation_id, document_id }),
+  });
+
+  if (!res.ok) {
+    // The endpoint can still fail before the stream opens - a bad document
+    // id, or the scope gate rejecting the upload.
+    return handle(res);
+  }
+
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+  let answer = null;
+
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+
+    // Frames are separated by a blank line. The last piece is kept back
+    // because it may be half a frame.
+    const frames = buffer.split('\n\n');
+    buffer = frames.pop() ?? '';
+
+    for (const frame of frames) {
+      const line = frame.split('\n').find((l) => l.startsWith('data:'));
+      if (!line) continue;
+
+      let event;
+      try {
+        event = JSON.parse(line.slice(5).trim());
+      } catch {
+        continue;   // a frame we can't read is not worth failing the answer over
+      }
+
+      if (event.type === 'delta') onDelta?.(event.text);
+      else if (event.type === 'revised') onRevised?.(event.body);
+      else if (event.type === 'done') answer = event.answer;
+      else if (event.type === 'error') throw new Error(event.message);
+    }
+  }
+
+  if (!answer) throw new Error('The answer ended before it was complete.');
+  return answer;
+}
+
+// Re-renders a stored answer in another language. The English original is
+// never overwritten server-side - this returns a rendering of it, and the
+// backend caches the result so switching back is instant.
+export async function translateAnswer(token, { query_log_id, language }) {
+  const res = await fetch(`${BASE_URL}/translate/answer`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify({ query_log_id, language }),
+  });
+  return handle(res);
+}
+
+// Translates a drafted document. Not cached: a draft is edited between
+// requests, so a cache would either miss constantly or go stale.
+export async function translateText(token, { text, language }) {
+  const res = await fetch(`${BASE_URL}/translate/text`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify({ text, language }),
+  });
+  return handle(res);
+}
+
 // Uploads go through multipart/form-data, so no Content-Type header here -
 // the browser sets it with the boundary token, and overriding it breaks the
 // parse on the server side.

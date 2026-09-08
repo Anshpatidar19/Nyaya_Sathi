@@ -20,18 +20,21 @@ from . import (
     arguments,
     doc_scope,
     drafting,
+    gemini,
     kanoon,
     models,
     reasoning,
     schemas,
     statutes,
     storage,
+    translate,
     supabase_auth,
 )
 from .auth import ensure_profile, get_current_user, require_advocate
 from .matters_api import router as matters_router
 from .config import settings
 from .database import Base, SessionLocal, engine, get_db
+from fastapi.responses import StreamingResponse
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -47,6 +50,18 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+def _sse(obj: dict) -> str:
+    """One SSE frame. default=str so datetimes in the payload don't blow up."""
+    return f"data: {json.dumps(obj, default=str)}\n\n"
+
+
+@app.on_event("shutdown")
+async def shutdown_clients():
+    """Close the keep-alive pools so reload and restart are clean."""
+    await gemini.close_client()
+    await kanoon.close_client()
 
 
 @app.on_event("startup")
@@ -353,7 +368,236 @@ async def ask(
 
     response = answer.model_dump()
     response["conversation_id"] = convo.id
+    # The turn id is what /translate/answer works from - without it a live
+    # answer can't be re-rendered until the thread is reloaded.
+    response["query_log_id"] = log.id
     return response
+
+
+@app.post("/ask/stream")
+async def ask_stream(
+    payload: schemas.AskRequest,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user),
+):
+    """Same answer as /ask, sent as it is written.
+
+    Server-Sent Events. Each line is `data: {"type": ..., ...}`:
+      delta    - more body text
+      revised  - the validator replaced the body; show this instead
+      done     - citations, next steps, grounding, conversation_id
+      error    - nothing usable; the client should show the message
+
+    Retrieval and validation are unchanged. Only the wait is different.
+    """
+    question = payload.question.strip()
+
+    document = None
+    if payload.document_id:
+        doc, text = await _load_document(db, payload.document_id, current_user)
+        await _gate_document(text, doc.filename)
+        document = {"filename": doc.filename, "text": text}
+        if not question:
+            question = "Explain this document and what it means for me."
+
+    if not question:
+        raise HTTPException(status_code=400, detail="Ask a question, or attach a document.")
+
+    title_seed = question if not document else f"{document['filename']} — {question}"
+    convo = _get_or_create_conversation(
+        db, current_user, payload.conversation_id, title_seed, "ask", payload.matter_id
+    )
+    history = _thread_history(db, convo.id) if payload.conversation_id else []
+    state = payload.state or current_user.state
+    convo_id = convo.id
+
+    async def events():
+        answer = None
+        try:
+            async for kind, value in reasoning.answer_question_stream(
+                question, state, history, document
+            ):
+                if kind == "delta":
+                    yield _sse({"type": "delta", "text": value})
+                elif kind == "revised":
+                    yield _sse({"type": "revised", "body": value})
+                elif kind == "error":
+                    yield _sse({"type": "error", "message": value})
+                    return
+                elif kind == "done":
+                    answer = value
+        except Exception as exc:
+            logger.exception("Streaming answer failed: %s", exc)
+            yield _sse({"type": "error", "message": "The answer could not be completed."})
+            return
+
+        if answer is None:
+            yield _sse({"type": "error", "message": "The answer could not be completed."})
+            return
+
+        if document:
+            answer.document_name = document["filename"]
+
+        # Written only once the validator has passed on it, exactly as in the
+        # buffered path - a streamed answer and a reloaded one must match.
+        log_id = None
+        try:
+            log = models.QueryLog(
+                user_id=current_user.id,
+                conversation_id=convo_id,
+                mode="ask",
+                question=title_seed,
+                answer_title=answer.title,
+                answer_body=answer.body,
+                citations_json=json.dumps([c.model_dump() for c in answer.citations]),
+                payload_json=json.dumps(answer.model_dump(), default=str),
+            )
+            db.add(log)
+            convo.updated_at = datetime.datetime.utcnow()
+            db.commit()
+            log_id = log.id
+        except Exception as exc:
+            db.rollback()
+            logger.exception("Could not save streamed answer: %s", exc)
+
+        final = answer.model_dump()
+        final["conversation_id"] = convo_id
+        # None when the save failed, which the client reads as "this answer
+        # can't be translated" rather than crashing on a missing id.
+        final["query_log_id"] = log_id
+        yield _sse({"type": "done", "answer": final})
+
+    return StreamingResponse(
+        events(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            # nginx buffers SSE by default and the stream arrives all at once
+            # at the end, which looks exactly like the bug this replaces.
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
+# ---------------- Languages ----------------
+# The interface stays in English. These endpoints translate generated output
+# only - the answer prose and drafted documents - and never the UI.
+
+@app.get("/languages")
+def list_languages():
+    """What the picker offers. Served from the backend so the frontend list
+    and the translator can't disagree about which codes are valid."""
+    return [
+        {"code": code, "name": meta["name"], "native": meta["native"]}
+        for code, meta in translate.LANGUAGES.items()
+    ]
+
+
+@app.post("/translate/answer")
+async def translate_answer(
+    payload: schemas.TranslateAnswerRequest,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user),
+):
+    """Render a stored answer in another language.
+
+    The English original is never overwritten: it is what the validator
+    passed and what the grounding badge was computed against. This returns a
+    rendering of it.
+    """
+    language = translate.normalise(payload.language)
+
+    turn = (
+        db.query(models.QueryLog)
+        .filter(
+            models.QueryLog.id == payload.query_log_id,
+            models.QueryLog.user_id == current_user.id,
+        )
+        .first()
+    )
+    if not turn:
+        raise HTTPException(status_code=404, detail="That answer wasn't found.")
+
+    original = json.loads(turn.payload_json) if turn.payload_json else {}
+    english = {
+        "title": turn.answer_title or original.get("title") or "",
+        "body": turn.answer_body or original.get("body") or "",
+        "next_steps": original.get("next_steps") or [],
+    }
+
+    if language == translate.DEFAULT_LANGUAGE:
+        return {"language": language, "cached": True, **english}
+
+    cached = (
+        db.query(models.AnswerTranslation)
+        .filter(
+            models.AnswerTranslation.query_log_id == turn.id,
+            models.AnswerTranslation.language == language,
+        )
+        .first()
+    )
+    if cached:
+        return {
+            "language": language,
+            "cached": True,
+            "title": cached.title,
+            "body": cached.body,
+            "next_steps": json.loads(cached.next_steps_json or "[]"),
+        }
+
+    try:
+        result = await translate.translate_answer(
+            english["title"], english["body"], english["next_steps"], language
+        )
+    except Exception as exc:
+        logger.warning("Translation to %s failed: %s", language, exc)
+        raise HTTPException(
+            status_code=503,
+            detail="That translation couldn't be produced. The English answer is unchanged.",
+        )
+
+    try:
+        db.add(models.AnswerTranslation(
+            query_log_id=turn.id,
+            language=language,
+            title=result["title"],
+            body=result["body"],
+            next_steps_json=json.dumps(result["next_steps"], ensure_ascii=False),
+        ))
+        db.commit()
+    except Exception as exc:
+        # A cache write failing is not a reason to withhold the translation.
+        db.rollback()
+        logger.warning("Could not cache translation: %s", exc)
+
+    return {"language": language, "cached": False, **result}
+
+
+@app.post("/translate/text")
+async def translate_text(
+    payload: schemas.TranslateTextRequest,
+    current_user: models.User = Depends(get_current_user),
+):
+    """Translate a drafted document.
+
+    Not cached: a draft is edited between requests, so a cache keyed on the
+    text would miss constantly and a cache keyed on the draft id would go
+    stale. Clause numbering, blanks and placeholders are preserved.
+    """
+    language = translate.normalise(payload.language)
+    if language == translate.DEFAULT_LANGUAGE:
+        return {"language": language, "body": payload.text}
+
+    try:
+        body = await translate.translate_document(payload.text, language)
+    except Exception as exc:
+        logger.warning("Document translation to %s failed: %s", language, exc)
+        raise HTTPException(
+            status_code=503,
+            detail="That translation couldn't be produced. The English draft is unchanged.",
+        )
+    return {"language": language, "body": body}
 
 
 @app.get("/ask/history", response_model=list[schemas.QueryHistoryItem])

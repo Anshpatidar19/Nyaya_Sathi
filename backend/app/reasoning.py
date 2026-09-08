@@ -10,9 +10,11 @@ Statutes lead, case law supports. The section states the rule; the judgments
 show how courts have read it.
 """
 
+import asyncio
 import logging
 import re
-from typing import Any, Dict, List, Optional
+import time
+from typing import Any, AsyncIterator, Dict, List, Optional, Tuple
 
 from . import gemini, kanoon, routing, statutes, validity
 from .config import settings
@@ -167,8 +169,7 @@ async def _hydrate(results: List[Dict[str, Any]], query: str) -> List[Dict[str, 
     6,000 characters are the cause title, counsel appearances and procedural
     history - the least useful part of the document.
     """
-    hydrated: List[Dict[str, Any]] = []
-    for r in results:
+    async def _one(r: Dict[str, Any]) -> Dict[str, Any]:
         headline = kanoon.strip_html(r.get("snippet") or "")
         text = headline
         docid = r.get("docid")
@@ -195,7 +196,15 @@ async def _hydrate(results: List[Dict[str, Any]], query: str) -> List[Dict[str, 
             except Exception as exc:
                 logger.warning("Kanoon text fetch failed for %s: %s", docid, exc)
 
-        hydrated.append({**r, "text": text, "headline": headline})
+        return {**r, "text": text, "headline": headline}
+
+    # Fetched together, not one after another. These are independent HTTP
+    # calls to the same host - waiting for each in turn made the slowest
+    # judgment set the latency for all of them. Same number of billed calls,
+    # a third of the wall time.
+    hydrated: List[Dict[str, Any]] = list(
+        await asyncio.gather(*(_one(r) for r in results))
+    )
     return hydrated
 
 
@@ -267,7 +276,9 @@ async def run_live_pipeline(
     if not settings.gemini_api_key:
         return None
 
+    t0 = time.perf_counter()
     sources = await retrieve(question, state, history, document)
+    t_retrieve = time.perf_counter() - t0
 
     # With a document attached, an empty source list is survivable: the
     # document itself is the material to explain. Without one, there is
@@ -275,6 +286,7 @@ async def run_live_pipeline(
     if not sources and not document:
         return None
 
+    t1 = time.perf_counter()
     try:
         draft = await gemini.synthesize(question, state, sources, history, document)
     except gemini.GeminiError as exc:
@@ -284,6 +296,8 @@ async def run_live_pipeline(
         logger.exception("Unexpected synthesis error: %s", exc)
         return None
 
+    t_synth = time.perf_counter() - t1
+
     body = draft["body"]
     if not body:
         return None
@@ -292,11 +306,21 @@ async def run_live_pipeline(
     # Skipped when a document is attached: the validator checks claims against
     # retrieved sources, and most of a document explanation is grounded in the
     # document instead. Running it here flags correct answers as unsupported.
+    t2 = time.perf_counter()
     try:
         verdict = (
             {"grounded": True, "issues": [], "revised_body": ""}
             if document
-            else await gemini.validate(question, draft, sources)
+            else await gemini.validate(question, draft, sources, state)
+        )
+        t_validate = time.perf_counter() - t2
+        # One line per answer, so the split is visible without a profiler.
+        # Guessing which stage is slow is how the wrong thing gets optimised.
+        logger.info(
+            "TIMING retrieve=%.2fs synth=%.2fs validate=%.2fs total=%.2fs "
+            "(%d sources, %d chars)",
+            t_retrieve, t_synth, t_validate, time.perf_counter() - t0,
+            len(sources), len(body),
         )
         if not verdict["grounded"]:
             logger.info("Validator flagged answer: %s", verdict["issues"])
@@ -313,6 +337,21 @@ async def run_live_pipeline(
     except Exception as exc:
         logger.warning("Validator step failed, returning unvalidated draft: %s", exc)
 
+    return _finalise(question, body, draft, sources)
+
+
+def _finalise(
+    question: str,
+    body: str,
+    draft: Dict[str, Any],
+    sources: List[Dict[str, Any]],
+) -> AskResponse:
+    """Citations, next steps and the grounding badge.
+
+    Shared by the buffered and streaming paths. Everything here depends on
+    the finished answer, which is why the streaming endpoint can only send it
+    after the last character has arrived.
+    """
     # --- Citations: the sources synthesis actually used ---
     used = draft["used_sources"]
     chosen = [sources[i - 1] for i in used if 1 <= i <= len(sources)] or sources
@@ -370,6 +409,99 @@ async def run_live_pipeline(
         next_steps=next_steps,
         grounding=grounding,
     )
+
+
+async def answer_question_stream(
+    question: str,
+    state: str | None = None,
+    history: Optional[List[Dict[str, str]]] = None,
+    document: Optional[Dict[str, str]] = None,
+) -> AsyncIterator[Tuple[str, Any]]:
+    """Stream the answer as it is written.
+
+    Yields:
+      ("delta", str)          - new characters of the body
+      ("done", AskResponse)   - citations, next steps and the grounding badge
+      ("revised", str)        - a corrected body, when the validator rejects
+                                what was already shown
+
+    The validator still runs and still blocks the "done" event, so nothing is
+    stored or badged unchecked. What changes is that the reader is not staring
+    at a spinner while it happens. On the rare occasion the validator rejects
+    the draft, the body is replaced - visibly - rather than never having been
+    shown, which is the honest trade for the wait being gone.
+    """
+    if not settings.gemini_api_key:
+        yield "error", "GEMINI_API_KEY is not set."
+        return
+
+    t0 = time.perf_counter()
+    sources = await retrieve(question, state, history, document)
+    t_retrieve = time.perf_counter() - t0
+
+    if not sources and not document:
+        yield "error", "Nothing relevant was retrieved for this question."
+        return
+
+    t1 = time.perf_counter()
+    draft: Optional[Dict[str, Any]] = None
+    try:
+        async for kind, value in gemini.synthesize_stream(
+            question, state, sources, history, document
+        ):
+            if kind == "delta":
+                yield "delta", value
+            else:
+                draft = value
+    except gemini.GeminiError as exc:
+        logger.warning("Gemini streaming synthesis failed: %s", exc)
+        yield "error", "The answer could not be generated. Please try again."
+        return
+    except Exception as exc:
+        logger.exception("Unexpected streaming synthesis error: %s", exc)
+        yield "error", "The answer could not be generated. Please try again."
+        return
+    t_synth = time.perf_counter() - t1
+
+    if not draft or not draft.get("body"):
+        yield "error", "The answer came back empty. Please try again."
+        return
+
+    body = draft["body"]
+
+    # --- Internal validator ---
+    # Skipped for documents, exactly as in the buffered path.
+    t2 = time.perf_counter()
+    try:
+        verdict = (
+            {"grounded": True, "issues": [], "revised_body": ""}
+            if document
+            else await gemini.validate(question, draft, sources, state)
+        )
+        if not verdict["grounded"]:
+            logger.info("Validator flagged answer: %s", verdict["issues"])
+            body = verdict["revised_body"] or (
+                "The provisions and judgments retrieved for this question "
+                "don't clearly answer it, so a reliable plain-language "
+                "summary can't be given here. The sources below are the "
+                "closest matches - it's worth reading them, or speaking to "
+                "a lawyer, before acting."
+            )
+            # The reader has already seen the draft, so say plainly that it
+            # has been replaced rather than swapping it out silently.
+            yield "revised", body
+    except Exception as exc:
+        logger.warning("Validator step failed, returning unvalidated draft: %s", exc)
+    t_validate = time.perf_counter() - t2
+
+    logger.info(
+        "TIMING(stream) retrieve=%.2fs synth=%.2fs validate=%.2fs total=%.2fs "
+        "(%d sources, %d chars)",
+        t_retrieve, t_synth, t_validate, time.perf_counter() - t0,
+        len(sources), len(body),
+    )
+
+    yield "done", _finalise(question, body, draft, sources)
 
 
 async def answer_question(

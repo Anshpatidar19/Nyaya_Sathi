@@ -10,6 +10,7 @@ from sqlalchemy import (
     Integer,
     String,
     Text,
+    UniqueConstraint,
 )
 from sqlalchemy.orm import relationship
 
@@ -225,3 +226,34 @@ class Document(Base):
 
     user = relationship("User", back_populates="documents")
     matter = relationship("Matter", back_populates="documents")
+
+
+class AnswerTranslation(Base):
+    """A translated copy of one answer, kept so switching back is instant.
+
+    The English original stays in QueryLog and is never overwritten - it is
+    what the validator passed and what the grounding badge was computed
+    against. This table holds renderings of it, nothing more.
+
+    Cached rather than regenerated because translation is deterministic
+    enough that paying for it twice buys nothing, and because a user toggling
+    between two languages to compare wording should not wait twice.
+    """
+
+    __tablename__ = "answer_translations"
+    __table_args__ = (
+        UniqueConstraint("query_log_id", "language", name="uq_translation_turn_lang"),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    query_log_id = Column(
+        Integer, ForeignKey("query_logs.id", ondelete="CASCADE"),
+        nullable=False, index=True,
+    )
+    language = Column(String(8), nullable=False)
+
+    title = Column(Text, nullable=True)
+    body = Column(Text, nullable=False)
+    next_steps_json = Column(Text, nullable=True)
+
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)
