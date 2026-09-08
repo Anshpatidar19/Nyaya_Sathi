@@ -132,8 +132,17 @@ async def translate_answer(
     )
 
     # Indian scripts cost more tokens per character than English, so the
-    # budget has to exceed what the English original needed.
-    budget = min(8000, max(2000, int(len(body) / 2) + 1200))
+    # budget has to exceed what the English original needed - and by more
+    # than this used to assume. A broad, comparative question ("what is the
+    # BNS and how does it differ from the IPC") produces a long English
+    # answer, and dividing that length by 2 under-provisioned the Devanagari/
+    # Tamil/etc rendering of it: the translation call would get cut off
+    # mid-object, fail to parse, and surface as "That translation couldn't
+    # be produced" - while short, narrow answers translated fine. The
+    # multiplier and ceiling are both raised so long answers have real
+    # headroom instead of relying on generate_json's truncation retry to
+    # cover the gap every time.
+    budget = min(16000, max(3000, int(len(body) * 1.4) + 1500))
 
     data = await gemini.generate_json(
         prompt,
@@ -204,7 +213,9 @@ async def translate_document(text: str, target: str) -> str:
     lang = LANGUAGES[code]
     system = _DOC_SYSTEM.format(language=lang["name"], native=lang["native"])
 
-    budget = min(12000, max(2000, int(len(text) / 2) + 1500))
+    # Same under-provisioning risk as translate_answer for a long document -
+    # see the comment there. Raised in step with it.
+    budget = min(20000, max(3000, int(len(text) * 1.4) + 1500))
 
     data = await gemini.generate_json(
         f"Translate this document. Return JSON only.\n\n-----\n{text}\n-----",

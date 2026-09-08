@@ -1,6 +1,8 @@
 """Synthesis + validator layer.
 
 Agentic Orchestration Layer:
+  0. Fast Path          - greetings and small talk answered directly, with
+                           no retrieval and no Gemini call at all
   1. Query Refinement   - strip filler, detect act-overview questions
   2. Retrieval Agents   - local bare acts (statutes.py) + Indian Kanoon case law
   3. Synthesis Agent    - Gemini turns retrieved material into plain language
@@ -25,6 +27,79 @@ logger = logging.getLogger(__name__)
 TOP_K = 3          # case-law results considered from Kanoon
 TOP_STATUTES = 3   # bare-act sections retrieved locally
 DOC_CHARS = 6000   # cap on grounding text per judgment (fallback path only)
+
+# ---------------------------------------------------------------------------
+# Agent 0 - Fast path for greetings and small talk
+# ---------------------------------------------------------------------------
+# "hi" was going through the full pipeline: BM25 retrieval, a Kanoon search
+# for the word "hi", a Gemini synthesis call, and a Gemini validator call -
+# several seconds of latency and two paid API calls to answer something that
+# needs neither law nor a language model. Matched here, it costs one regex
+# check and returns immediately. Anything that isn't a clean, standalone
+# greeting falls through to the real pipeline unchanged - "hi, can my
+# landlord evict me?" is a legal question, not small talk, and must not be
+# short-circuited.
+
+_GREETING_ONLY_RE = re.compile(
+    r"^(?:"
+    r"(?:hi+|hello+|hey+|yo|hola|namaste[a-z]*)(?:\s+there)?|"
+    r"good\s*(?:morning|afternoon|evening|night)|"
+    r"how\s+are\s+you|how\s+r\s+u|how'?s\s+it\s+going|what'?s\s+up|"
+    r"who\s+are\s+you|what\s+(?:are\s+you|can\s+you\s+do)|"
+    r"thanks?(?:\s+a\s+lot)?|thank\s+you(?:\s+(?:so\s+much|very\s+much|a\s+lot))?|"
+    r"ok(?:ay)?|cool|great|nice(?:\s+one)?|got\s+it|"
+    r"bye+|good\s*bye|see\s+you|take\s+care"
+    r")[\s!.,?]*$",
+    re.IGNORECASE,
+)
+
+# Keeps a real question from matching by accident - "hi" is four characters,
+# "how are you doing given my landlord just filed an eviction notice" is not.
+_GREETING_MAX_CHARS = 40
+
+_GREETING_TITLE = "Hi there"
+
+_GREETING_NEXT_STEPS = [
+    "Ask a specific question, e.g. \"can my landlord evict me without notice?\"",
+]
+
+
+def greeting_reply(question: str) -> Optional[Dict[str, Any]]:
+    """A canned, instant reply for small talk - None for anything else.
+
+    Deliberately conservative: this only fires when the ENTIRE message is a
+    greeting, thanks, or sign-off, not when one merely appears in it.
+    """
+    q = question.strip()
+    if not q or len(q) > _GREETING_MAX_CHARS:
+        return None
+    if not _GREETING_ONLY_RE.match(q):
+        return None
+
+    ql = q.lower()
+    if "thank" in ql:
+        body = (
+            "You're welcome! If anything else comes up — a notice, a "
+            "dispute, a question about your rights — I'm here."
+        )
+    elif any(w in ql for w in ("bye", "see you", "take care")):
+        body = "Take care. Come back any time you need a legal question answered."
+    elif "who are you" in ql or "what are you" in ql or "what can you do" in ql:
+        body = (
+            "I'm Nyaya Sathi — I answer legal questions in plain language, "
+            "grounded in Indian statutes and case law, and I can also draft "
+            "and review common documents. Ask me anything, e.g. \"how do I "
+            "file an RTI application?\""
+        )
+    else:
+        body = (
+            "Hello! I'm Nyaya Sathi. Ask me a legal question in plain "
+            "language — for example, \"what are my rights if I'm arrested?\" "
+            "or \"can my landlord raise my rent without notice?\""
+        )
+
+    return {"title": _GREETING_TITLE, "body": body, "next_steps": list(_GREETING_NEXT_STEPS)}
+
 
 # ---------------------------------------------------------------------------
 # Support resources
@@ -276,6 +351,20 @@ async def run_live_pipeline(
     if not settings.gemini_api_key:
         return None
 
+    # Fast path: a plain "hi" needs no document context to answer, and
+    # skipping it here means the greeting still short-circuits even when the
+    # frontend happens to send one along.
+    if not document:
+        greeting = greeting_reply(question)
+        if greeting:
+            return AskResponse(
+                title=greeting["title"],
+                body=greeting["body"],
+                citations=[],
+                next_steps=greeting["next_steps"],
+                grounding=None,
+            )
+
     t0 = time.perf_counter()
     sources = await retrieve(question, state, history, document)
     t_retrieve = time.perf_counter() - t0
@@ -434,6 +523,23 @@ async def answer_question_stream(
     if not settings.gemini_api_key:
         yield "error", "GEMINI_API_KEY is not set."
         return
+
+    # Fast path: same short-circuit as the buffered pipeline. Sent as a
+    # single delta rather than trickling character-by-character - there's
+    # nothing to gain from typing out "Hello!" slowly, and the whole point
+    # is to skip the wait, not relocate it.
+    if not document:
+        greeting = greeting_reply(question)
+        if greeting:
+            yield "delta", greeting["body"]
+            yield "done", AskResponse(
+                title=greeting["title"],
+                body=greeting["body"],
+                citations=[],
+                next_steps=greeting["next_steps"],
+                grounding=None,
+            )
+            return
 
     t0 = time.perf_counter()
     sources = await retrieve(question, state, history, document)

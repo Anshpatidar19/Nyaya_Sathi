@@ -108,10 +108,13 @@ async def get_current_user(
 def require_advocate(
     current_user: models.User = Depends(get_current_user),
 ) -> models.User:
-    """Gate for the advocate-only tools (draft, review).
+    """Gate for the advocate-only tool (Arguments).
 
-    The frontend already hides these, but a URL typed by hand shouldn't reach
-    them - a demo that leaks its own advocate tools stops looking finished.
+    Draft and Review are open to every account - see /draft and /review in
+    main.py. Arguments builds one-sided advocacy for a case, which is a
+    lawyer's tool, not neutral legal information, so it stays gated here.
+    The frontend already hides it, but a URL typed by hand shouldn't reach
+    it - a demo that leaks its own advocate tools stops looking finished.
     """
     if normalise_role(current_user.role) != "advocate":
         raise HTTPException(

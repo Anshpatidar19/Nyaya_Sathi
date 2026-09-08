@@ -104,8 +104,11 @@ const MAX_UPLOAD_BYTES = 10 * 1024 * 1024;
 
 const ALL_MODES = [
   { id: 'ask', label: 'Ask', icon: Icon.ask },
-  { id: 'draft', label: 'Draft', icon: Icon.draft, advocateOnly: true },
-  { id: 'review', label: 'Review', icon: Icon.review, advocateOnly: true },
+  // Draft and Review are open to every account - see /draft and /review on
+  // the backend. Arguments stays advocate-only: it builds one-sided
+  // advocacy for a case rather than neutral legal information.
+  { id: 'draft', label: 'Draft', icon: Icon.draft },
+  { id: 'review', label: 'Review', icon: Icon.review },
   { id: 'argue', label: 'Arguments', icon: Icon.argue, advocateOnly: true },
   // Not a mode - it navigates away to the matter workspace.
   { id: 'matters', label: 'Matters', icon: Icon.matters, advocateOnly: true, route: '/matters' },
@@ -243,23 +246,23 @@ export default function Ask() {
   // page could settle; now they load the first time you open the tool that
   // uses them.
   useEffect(() => {
-    if (!token || !isAdvocate) return;
-    if (mode === 'draft' && types.length === 0) {
+    if (!token) return;
+    // Draft and Review types are available to every account.
+    if ((mode === 'draft' || mode === 'review') && types.length === 0) {
       fetchDraftTypes(token).then(setTypes).catch(() => {});
     }
-    if (mode === 'review' && types.length === 0) {
-      fetchDraftTypes(token).then(setTypes).catch(() => {});
-    }
-    if (mode === 'argue' && sides.length === 0) {
+    // Arguments stays advocate-only.
+    if (mode === 'argue' && isAdvocate && sides.length === 0) {
       fetchArgumentSides(token).then(setSides).catch(() => {});
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [token, isAdvocate, mode]);
 
-  // Safety net: a general user restoring a saved draft/review thread, or an
+  // Safety net: a general user restoring a saved Arguments thread, or an
   // account whose role changed, snaps back to Ask instead of a dead screen.
+  // Draft and Review need no such guard - every account can use them.
   useEffect(() => {
-    if (!isAdvocate && mode !== 'ask') switchMode('ask');
+    if (!isAdvocate && mode === 'argue') switchMode('ask');
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isAdvocate, mode]);
 
