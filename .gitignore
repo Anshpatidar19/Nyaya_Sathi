@@ -5,6 +5,8 @@ __pycache__/
 *.pyc
 .env
 *.db
+*.db-*
+*.db.backup
 backend/.env
 backend/.venv/
 backend/venv/
