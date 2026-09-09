@@ -28,6 +28,42 @@ class Settings(BaseSettings):
     site_url: str = os.getenv("SITE_URL", "http://localhost:5173")  # service_role key
     supabase_bucket: str = os.getenv("SUPABASE_BUCKET", "user-documents")
 
+    # --- Vector retrieval (optional) --------------------------------------
+    # Everything here can be left unset. With no PINECONE_API_KEY the dense
+    # fallback simply never runs and retrieval behaves exactly as before.
+    pinecone_api_key: str = os.getenv("PINECONE_API_KEY", "")
+    pinecone_index: str = os.getenv("PINECONE_INDEX", "nyaya-sathi")
+    pinecone_cloud: str = os.getenv("PINECONE_CLOUD", "aws")
+    pinecone_region: str = os.getenv("PINECONE_REGION", "us-east-1")
+
+    # Keep at 0 until the index is built. Turning it on beforehand makes the
+    # first live query create an empty index, which blocks for about a minute
+    # and then matches nothing.
+    dense_fallback: bool = os.getenv("DENSE_FALLBACK", "0") not in ("0", "false", "False")
+
+    # Measured with `python -m app.dense --calibrate`, not guessed. Coverage
+    # is the signal that matters: it catches BM25 scoring a section highly on
+    # one common word and getting the answer wrong.
+    dense_min_score: float = float(os.getenv("DENSE_MIN_SCORE", "8.0"))
+    dense_min_coverage: float = float(os.getenv("DENSE_MIN_COVERAGE", "0.34"))
+
+    # --- Vector retrieval ------------------------------------------------
+    # Pinecone holds embeddings of the bare acts. Everything here is optional:
+    # with no key set, the dense fallback stays off and retrieval is BM25 only,
+    # exactly as before.
+    pinecone_api_key: str = os.getenv("PINECONE_API_KEY", "")
+    pinecone_index: str = os.getenv("PINECONE_INDEX", "nyaya-sathi")
+    pinecone_cloud: str = os.getenv("PINECONE_CLOUD", "aws")
+    pinecone_region: str = os.getenv("PINECONE_REGION", "us-east-1")
+
+    # Leave at 0 until the index has actually been built - see
+    # `python -m app.ingest_vectors --statutes`. Turning it on before then
+    # makes every query create an empty index and burn embedding calls.
+    dense_fallback: bool = os.getenv("DENSE_FALLBACK", "0") not in ("0", "false", "False")
+    # Thresholds from `python -m app.dense --calibrate`, not guesswork.
+    dense_min_score: float = float(os.getenv("DENSE_MIN_SCORE", "8.0"))
+    dense_min_coverage: float = float(os.getenv("DENSE_MIN_COVERAGE", "0.34"))
+
     class Config:
         env_file = ".env"
         extra = "ignore"

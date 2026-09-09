@@ -20,7 +20,7 @@ import re
 from collections import Counter
 from functools import lru_cache
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 logger = logging.getLogger(__name__)
 
@@ -175,6 +175,56 @@ ACTS: Dict[str, Dict[str, Any]] = {
         "current": True,
         "superseded_by": None,
         "url_template": None,
+        "priority": 1,
+        "unit": "Section",
+    },
+    "specific_relief": {
+        "file": "specific_relief.json",
+        "name": "Specific Relief Act, 1963",
+        "short": "SRA",
+        "current": True,
+        "superseded_by": None,
+        "url_template": "https://indiankanoon.org/search/?formInput=section+{section}+specific+relief+act",
+        "priority": 1,
+        "unit": "Section",
+    },
+    "limitation": {
+        "file": "limitation.json",
+        "name": "Limitation Act, 1963",
+        "short": "Limitation Act",
+        "current": True,
+        "superseded_by": None,
+        "url_template": "https://indiankanoon.org/search/?formInput=section+{section}+limitation+act",
+        "priority": 1,
+        "unit": "Section",
+    },
+    "cpa": {
+        "file": "cpa.json",
+        "name": "Consumer Protection Act, 2019",
+        "short": "CPA",
+        "current": True,
+        "superseded_by": None,
+        "url_template": "https://indiankanoon.org/search/?formInput=section+{section}+consumer+protection+act+2019",
+        "priority": 1,
+        "unit": "Section",
+    },
+    "ita": {
+        "file": "ita.json",
+        "name": "Information Technology Act, 2000",
+        "short": "IT Act",
+        "current": True,
+        "superseded_by": None,
+        "url_template": "https://indiankanoon.org/search/?formInput=section+{section}+information+technology+act",
+        "priority": 1,
+        "unit": "Section",
+    },
+    "arbitration": {
+        "file": "arbitration.json",
+        "name": "Arbitration and Conciliation Act, 1996",
+        "short": "A&C Act",
+        "current": True,
+        "superseded_by": None,
+        "url_template": "https://indiankanoon.org/search/?formInput=section+{section}+arbitration+and+conciliation+act",
         "priority": 1,
         "unit": "Section",
     },
@@ -504,6 +554,19 @@ _ACT_ALIASES = {
     "penal code": "ipc",
     "negotiable instrument act": "nia",
     "negotiable instruments act": "nia",
+    "specific relief act": "specific_relief",
+    "specific relief": "specific_relief",
+    "sra": "specific_relief",
+    "limitation act": "limitation",
+    "consumer protection act": "cpa",
+    "consumer protection": "cpa",
+    "cpa": "cpa",
+    "information technology act": "ita",
+    "it act": "ita",
+    "ita": "ita",
+    "arbitration and conciliation act": "arbitration",
+    "arbitration act": "arbitration",
+    "a&c act": "arbitration",
     "bnss": "crpc",
     "nagarik suraksha": "crpc",
 }
@@ -656,7 +719,8 @@ def _rank_weight(doc: Dict[str, Any]) -> float:
     return max(w, 0.05)
 
 
-def _bm25(query: str, docs: List[Dict[str, Any]], limit: int) -> List[Dict[str, Any]]:
+def _bm25_scored(query: str, docs: List[Dict[str, Any]], limit: int
+                 ) -> List[Tuple[float, Dict[str, Any]]]:
     idx = _index()
     terms = _expand(query)
     if not terms:
@@ -686,7 +750,12 @@ def _bm25(query: str, docs: List[Dict[str, Any]], limit: int) -> List[Dict[str, 
             scored.append((score, d))
 
     scored.sort(key=lambda x: x[0], reverse=True)
-    return [d for _, d in scored[:limit]]
+    return scored[:limit]
+
+
+def _bm25(query: str, docs: List[Dict[str, Any]], limit: int) -> List[Dict[str, Any]]:
+    """Scores discarded. Kept so existing callers are unaffected."""
+    return [d for _, d in _bm25_scored(query, docs, limit)]
 
 
 def _with_companions(hits: List[Dict[str, Any]], limit: int) -> List[Dict[str, Any]]:
@@ -724,8 +793,36 @@ def search(query: str, limit: int = 3) -> List[Dict[str, Any]]:
     if exact:
         return _with_companions(exact[:limit], limit)
 
-    # 3. Otherwise BM25.
-    return _with_companions(_bm25(query, docs, limit), limit)
+    # 3. BM25, with a dense fallback when it looks unsure.
+    #
+    # Two things trigger the fallback: a weak top score, and low coverage -
+    # the fraction of the question's content words the top hit actually
+    # contains. Coverage is the one that earns its keep. A query about a
+    # boundary dispute with a neighbour scored Article 131 highly because the
+    # article says "dispute" and "property", but it matched nothing else in
+    # the question. A score threshold alone would not have caught that.
+    #
+    # dense is imported inside the function on purpose: statutes.py stays
+    # importable with no Pinecone or embedding dependency installed, which
+    # matters for a fresh clone and for running the eval offline. If the
+    # fallback is disabled or the vector index is unreachable, dense_hits()
+    # returns empty and BM25's answer stands unchanged.
+    scored = _bm25_scored(query, docs, limit)
+    hits = [d for _, d in scored]
+
+    try:
+        from . import dense
+
+        fire, reason = dense.should_fall_back(scored, _expand(query))
+        if fire:
+            extra = dense.dense_hits(query, limit)
+            if extra:
+                logger.info("Dense fallback fired (%s), %d hits", reason, len(extra))
+                hits = dense.fuse(hits, extra, limit)
+    except Exception as exc:
+        logger.warning("Dense fallback skipped (%s)", exc)
+
+    return _with_companions(hits, limit)
 
 
 def related_laws(hits: List[Dict[str, Any]]) -> List[Dict[str, str]]:

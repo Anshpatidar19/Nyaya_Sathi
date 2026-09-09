@@ -39,6 +39,11 @@ from fastapi.responses import StreamingResponse
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+# httpx logs every request at INFO, full URL included - and Gemini takes its
+# API key as a query parameter, so the key ends up in the terminal, in any log
+# file, and in any screenshot. Warnings still surface; the URLs do not.
+logging.getLogger("httpx").setLevel(logging.WARNING)
+
 Base.metadata.create_all(bind=engine)
 
 app = FastAPI(title="Nyaya Sathi API", version="0.2.0")
@@ -410,6 +415,11 @@ async def ask_stream(
     history = _thread_history(db, convo.id) if payload.conversation_id else []
     state = payload.state or current_user.state
     convo_id = convo.id
+    # Captured before the generator starts. FastAPI closes the request-scoped
+    # session as soon as this handler returns, but events() runs *after* that,
+    # while the response streams. Touching an ORM instance in there raises
+    # DetachedInstanceError, so pull out the plain values now.
+    user_id = current_user.id
 
     async def events():
         answer = None
@@ -441,9 +451,13 @@ async def ask_stream(
         # Written only once the validator has passed on it, exactly as in the
         # buffered path - a streamed answer and a reloaded one must match.
         log_id = None
+        # A fresh session, for the same reason: `db` belongs to a request that
+        # has already returned. Opened late and closed straight after, so it
+        # holds a connection only for the write itself.
+        write_db = SessionLocal()
         try:
             log = models.QueryLog(
-                user_id=current_user.id,
+                user_id=user_id,
                 conversation_id=convo_id,
                 mode="ask",
                 question=title_seed,
@@ -452,13 +466,17 @@ async def ask_stream(
                 citations_json=json.dumps([c.model_dump() for c in answer.citations]),
                 payload_json=json.dumps(answer.model_dump(), default=str),
             )
-            db.add(log)
-            convo.updated_at = datetime.datetime.utcnow()
-            db.commit()
+            write_db.add(log)
+            write_db.query(models.Conversation).filter(
+                models.Conversation.id == convo_id
+            ).update({"updated_at": datetime.datetime.utcnow()})
+            write_db.commit()
             log_id = log.id
         except Exception as exc:
-            db.rollback()
+            write_db.rollback()
             logger.exception("Could not save streamed answer: %s", exc)
+        finally:
+            write_db.close()
 
         final = answer.model_dump()
         final["conversation_id"] = convo_id
@@ -848,22 +866,15 @@ async def kanoon_doc(docid: str, current_user: models.User = Depends(get_current
 # ---------------- Drafting & review ----------------
 
 @app.get("/draft/types")
-def draft_types(current_user: models.User = Depends(get_current_user)):
-    """Catalogue of document types the drafting agent can produce.
-
-    Open to every logged-in account, not just advocates - most of these
-    (legal notices, RTI applications, rent agreements) are things an
-    ordinary person drafts for themselves. Types that genuinely need a
-    lawyer to settle before filing are flagged via `needs_advocate` instead
-    of hidden outright, so the frontend can warn rather than block.
-    """
+def draft_types(current_user: models.User = Depends(require_advocate)):
+    """Catalogue of document types the drafting agent can produce."""
     return drafting.list_types()
 
 
 @app.post("/draft", response_model=schemas.DraftResponse)
 async def create_draft(
     payload: schemas.DraftRequest,
-    current_user: models.User = Depends(get_current_user),
+    current_user: models.User = Depends(require_advocate),
 ):
     if not payload.instructions.strip():
         raise HTTPException(status_code=400, detail="Describe what you need drafted.")
@@ -942,14 +953,9 @@ async def generate_arguments(
 async def review_document(
     payload: schemas.ReviewRequest,
     db: Session = Depends(get_db),
-    current_user: models.User = Depends(get_current_user),
+    current_user: models.User = Depends(require_advocate),
 ):
-    """Red-line a counterparty's document. Accepts raw text or an uploaded file id.
-
-    Open to every logged-in account. Anyone can be handed a rent agreement
-    or a notice to sign - they don't need to be an advocate to want the
-    risky clauses flagged before they do.
-    """
+    """Red-line a counterparty's document. Accepts raw text or an uploaded file id."""
     text = (payload.document_text or "").strip()
     filename = None
 
