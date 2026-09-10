@@ -80,8 +80,10 @@ class Matter(Base):
     urgent = Column(Boolean, nullable=False, default=False, server_default="false")
 
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
+    # Indexed: the matters list always orders by this, newest activity first.
     updated_at = Column(
-        DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow
+        DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow,
+        index=True,
     )
 
     user = relationship("User", back_populates="matters")
@@ -163,8 +165,10 @@ class Conversation(Base):
     title = Column(String, nullable=False, default="New conversation")
     mode = Column(String, nullable=False, default="ask")   # ask | draft | review | argue
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
+    # Indexed: the conversation list always orders by this, newest first.
     updated_at = Column(
-        DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow
+        DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow,
+        index=True,
     )
 
     user = relationship("User", back_populates="conversations")
@@ -183,7 +187,10 @@ class QueryLog(Base):
     __tablename__ = "query_logs"
 
     id = Column(Integer, primary_key=True, index=True)
-    user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    # Indexed: /ask/history filters on this for every page load. Missing this
+    # index meant a full scan of query_logs - across every user, not just the
+    # one asking - which is why history got slower as the table grew.
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
     # Nullable so rows that predate threading still load.
     conversation_id = Column(
         Integer, ForeignKey("conversations.id"), nullable=True, index=True
@@ -197,7 +204,8 @@ class QueryLog(Base):
     answer_title = Column(String, nullable=True)
     answer_body = Column(Text, nullable=True)
     citations_json = Column(Text, nullable=True)
-    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+    # Indexed: /ask/history orders by this, on top of the user_id filter.
+    created_at = Column(DateTime, default=datetime.datetime.utcnow, index=True)
 
     user = relationship("User", back_populates="queries")
     conversation = relationship("Conversation", back_populates="turns")
@@ -222,7 +230,9 @@ class Document(Base):
     content_type = Column(String, nullable=True)
     size_bytes = Column(BigInteger, nullable=True)
     note = Column(Text, nullable=True)                 # user's own description
-    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+    # Indexed: /documents orders by this (the attach-a-file picker, and the
+    # Matter detail page's documents tab).
+    created_at = Column(DateTime, default=datetime.datetime.utcnow, index=True)
 
     user = relationship("User", back_populates="documents")
     matter = relationship("Matter", back_populates="documents")

@@ -419,26 +419,31 @@ export async function fetchDraftTypes(token) {
   return cachedGet(`${BASE_URL}/draft/types`, token);
 }
 
-export async function createDraft(token, { doc_type, instructions, details }) {
+export async function createDraft(token, { doc_type, instructions, details, conversation_id }) {
   const res = await fetch(`${BASE_URL}/draft`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
       Authorization: `Bearer ${token}`,
     },
-    body: JSON.stringify({ doc_type, instructions, details }),
+    // conversation_id continues an existing thread; omit it to start one -
+    // same convention as askQuestion. The response echoes it back.
+    body: JSON.stringify({ doc_type, instructions, details, conversation_id }),
   });
   return handle(res);
 }
 
-export async function reviewDocument(token, { document_text, document_id, doc_type, context }) {
+export async function reviewDocument(
+  token,
+  { document_text, document_id, doc_type, context, conversation_id },
+) {
   const res = await fetch(`${BASE_URL}/review`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
       Authorization: `Bearer ${token}`,
     },
-    body: JSON.stringify({ document_text, document_id, doc_type, context }),
+    body: JSON.stringify({ document_text, document_id, doc_type, context, conversation_id }),
   });
   return handle(res);
 }

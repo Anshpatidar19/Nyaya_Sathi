@@ -22,6 +22,7 @@ import time
 from typing import Any, Dict, Optional
 
 import httpx
+from jose import JWTError, jwt as jose_jwt
 
 from .config import settings
 
@@ -308,10 +309,21 @@ async def _fetch_user(access_token: str) -> Optional[Dict[str, Any]]:
 async def get_user(access_token: str) -> Optional[Dict[str, Any]]:
     """Validate a Supabase access token. Returns the user, or None if invalid.
 
-    Asking GoTrue directly rather than verifying the JWT locally means we
-    don't have to care whether the project signs with a shared secret or an
-    asymmetric key, and revoked tokens stop working within the cache window.
+    Two paths:
+      - SUPABASE_JWT_SECRET set  -> verify the signature locally. No network
+        call at all, so this costs microseconds instead of a round trip to
+        Supabase - the fix for every authenticated route feeling slow.
+      - not set                 -> ask GoTrue directly, same as before, with
+        the short cache below softening repeat calls.
+
+    A locally-verified token that's expired or malformed simply fails to
+    decode and falls through to the remote check below, so nothing breaks if
+    the secret is wrong or the token predates a project's key rotation.
     """
+    local = _decode_local(access_token)
+    if local:
+        return local
+
     cached = _cache_get(access_token)
     if cached:
         return cached[1]
@@ -326,6 +338,33 @@ async def get_user(access_token: str) -> Optional[Dict[str, Any]]:
         return await asyncio.shield(task)
     finally:
         _inflight.pop(access_token, None)
+
+
+def _decode_local(access_token: str) -> Optional[Dict[str, Any]]:
+    """Verify a Supabase JWT's signature ourselves - no network call.
+
+    Supabase signs every access token with a project-specific secret
+    (HS256). Given that secret, checking a token is pure cryptography and
+    costs nothing but CPU. Returns a dict shaped like GoTrue's /user
+    response, but only the fields get_current_user actually reads.
+    """
+    if not settings.supabase_jwt_secret:
+        return None
+    try:
+        payload = jose_jwt.decode(
+            access_token,
+            settings.supabase_jwt_secret,
+            algorithms=["HS256"],
+            audience="authenticated",
+        )
+    except JWTError:
+        return None
+
+    return {
+        "id": payload.get("sub"),
+        "email": payload.get("email"),
+        "user_metadata": payload.get("user_metadata") or {},
+    }
 
 
 # ---------------------------------------------------------------------------
