@@ -273,6 +273,22 @@ async def _gate_document(text: str, filename: str) -> None:
         raise HTTPException(status_code=422, detail=verdict.reason)
 
 
+def _gate_request(text: str, *, allow_short: bool = False) -> None:
+    """Refuse typed input that isn't a request at all.
+
+    Runs before retrieval and before any model call. Without it a keyboard
+    mash reaches the drafting agent, which obliges with a notice-shaped
+    document whose every fact is a bracketed placeholder - work product in
+    appearance, invented in substance. 422 for the same reason the document
+    gate uses it: the request was well formed, the content wasn't.
+
+    Synchronous and local: no API call, so it is free to run on every path.
+    """
+    verdict = doc_scope.check_request(text, allow_short=allow_short)
+    if not verdict.in_scope:
+        raise HTTPException(status_code=422, detail=verdict.reason)
+
+
 # ---------------- Ask (core Q&A) ----------------
 
 HISTORY_TURNS = 4     # earlier turns fed back to the model
@@ -331,6 +347,10 @@ async def ask(
     current_user: models.User = Depends(get_current_user),
 ):
     question = payload.question.strip()
+
+    # A document attached alongside carries the context, so a one-word nudge
+    # is legitimate there and only the gibberish tests apply.
+    _gate_request(question, allow_short=bool(payload.document_id))
 
     document = None
     if payload.document_id:
@@ -396,6 +416,8 @@ async def ask_stream(
     Retrieval and validation are unchanged. Only the wait is different.
     """
     question = payload.question.strip()
+
+    _gate_request(question, allow_short=bool(payload.document_id))
 
     document = None
     if payload.document_id:
@@ -889,6 +911,11 @@ async def create_draft(
     if not payload.instructions.strip():
         raise HTTPException(status_code=400, detail="Describe what you need drafted.")
 
+    # Drafting is where this matters most: with nothing real to work from the
+    # model fills a whole notice with bracketed placeholders, and a document
+    # that looks finished is one a user may act on.
+    _gate_request(payload.instructions)
+
     try:
         result = await drafting.draft(
             payload.doc_type, payload.instructions, payload.details
@@ -898,9 +925,14 @@ async def create_draft(
         raise HTTPException(status_code=503, detail="Could not produce a draft. Try again.")
 
     if not result["body"]:
+        # The model declined - either the instructions described nothing it
+        # could work from, or they were outside legal drafting. Its own note
+        # is more useful than a generic line, so prefer it when there is one.
+        note = next((n for n in result.get("notes") or [] if n.strip()), "")
         raise HTTPException(
             status_code=422,
-            detail="Not enough information to draft this. Add more detail and retry.",
+            detail=note
+            or "Not enough information to draft this. Add more detail and retry.",
         )
 
     # Saved the same way /ask saves a turn, so drafts show up in the sidebar
@@ -946,6 +978,10 @@ async def generate_arguments(
     """
     facts = (payload.facts or "").strip()
     document_name = None
+
+    # Same gate as everywhere else. An advocate mashing the keyboard should
+    # get a nudge, not a confidently argued case built from nothing.
+    _gate_request(facts, allow_short=bool(payload.document_id))
 
     if payload.document_id:
         doc, doc_text = await _load_document(db, payload.document_id, current_user)
@@ -1004,6 +1040,12 @@ async def review_document(
             status_code=400,
             detail="Provide document_text, or a document_id of a file you uploaded.",
         )
+
+    # Pasted text gets the request gate first. The document gate's short-text
+    # message talks about scanned files needing OCR, which is nonsense advice
+    # for something the user typed into the box by hand.
+    if not filename:
+        _gate_request(text)
 
     # Same gate as /ask. Pasted text goes through it too - a chemistry lab
     # report is no more reviewable for pasting it in by hand.

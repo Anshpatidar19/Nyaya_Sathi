@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
-import { useAuth } from '../AuthContext';
+import { useAuth, ACTIVE_CONVERSATION_KEY } from '../AuthContext';
 import ThemeToggle from '../components/ThemeToggle';
 import ArgumentsResult from '../components/ArgumentsResult';
 import ArgumentsSetup from '../components/ArgumentsSetup';
@@ -165,7 +165,48 @@ const CHIPS = {
   argue: [],
 };
 
-const STORAGE_KEY = 'ns_active_conversation';
+// Owned by AuthContext, which has to clear it on login and logout. Aliased
+// here so the two files can never disagree about the key name.
+const STORAGE_KEY = ACTIVE_CONVERSATION_KEY;
+
+/* Which thread this tab was last reading. sessionStorage, so it dies with the
+   tab, and every access is guarded - storage throws outright in some private
+   modes, and losing a convenience is no reason to take the page down. */
+const thread = {
+  get() {
+    try { return sessionStorage.getItem(STORAGE_KEY); } catch (_) { return null; }
+  },
+  remember(id) {
+    try { sessionStorage.setItem(STORAGE_KEY, String(id)); } catch (_) { /* ignore */ }
+  },
+  forget() {
+    try { sessionStorage.removeItem(STORAGE_KEY); } catch (_) { /* ignore */ }
+  },
+};
+
+/* Was this document actually reloaded - F5, or a browser restoring the tab?
+   Anything else (following a link, logging in, a router transition) is an
+   arrival, and an arrival should start a new question. */
+function wasPageReload() {
+  try {
+    const [nav] = performance.getEntriesByType('navigation');
+    if (nav) return nav.type === 'reload';
+    // Safari and older browsers predate Navigation Timing Level 2.
+    return performance.navigation?.type === 1;
+  } catch (_) {
+    return false;
+  }
+}
+
+/* Module scope, evaluated once per document load, and consumed by the first
+   mount that reads it.
+   
+   It has to live outside the component. Ask mounts again every time you come
+   back from Matters or the auth guard finishes, and a reload flag that reset
+   with the component would make each of those look like a reload - which is
+   the bug: you land on Ask, and the thread you were reading last week opens
+   itself, so the next question you ask goes into it. */
+let restoreAllowed = wasPageReload();
 
 const MODES_SET = ['ask', 'draft', 'review', 'argue'];
 
@@ -232,14 +273,31 @@ export default function Ask() {
   const [setupOpen, setSetupOpen] = useState(false);
   const threadEndRef = useRef(null);
   const fileInputRef = useRef(null);
+  // True once the user has done anything that owns the screen - sent a
+  // question, attached a file, switched tools, started a new thread, or
+  // opened a thread from the sidebar. The restore below is a convenience and
+  // must never paint over any of those, however late its fetch resolves.
+  const userActedRef = useRef(false);
 
   useEffect(() => {
     if (!token) return;
     refreshHistory();
 
-    // Restore the last thread so a refresh doesn't wipe the screen.
-    const saved = localStorage.getItem(STORAGE_KEY);
-    if (saved) loadConversation(Number(saved));
+    // Reopening the last thread is for one case only: the page was reloaded
+    // mid-conversation and the screen would otherwise go blank. Consumed
+    // here, so later mounts in the same document - returning from Matters,
+    // switching tools, the auth guard resolving - are arrivals and start a
+    // new question, whichever surface and whichever role.
+    if (!restoreAllowed) return;
+    restoreAllowed = false;
+
+    // A URL that names its own mode is someone arriving from Matters to open
+    // Draft or Review. Reopening an older thread would drag them straight
+    // back out of the tool they picked.
+    if (searchParams.get('mode')) return;
+
+    const saved = thread.get();
+    if (saved) loadConversation(Number(saved), { restore: true });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [token]);
 
@@ -291,9 +349,22 @@ export default function Ask() {
     fetchConversations(token, { fresh }).then(setHistory).catch(() => {});
   }
 
-  async function loadConversation(id) {
+  async function loadConversation(id, { restore = false } = {}) {
+    // A restore that resolves after the user has already moved on must be
+    // dropped, not applied. This was the bug that pulled people into their
+    // previous thread the moment they asked something after logging in: the
+    // question went out, the restore landed a beat later, and its setTurns
+    // and setConversationId overwrote the question that was in flight.
+    //
+    // Checked twice on purpose - once before the fetch, once after - because
+    // the user can act during the round trip.
+    if (restore && userActedRef.current) return;
+    if (!restore) userActedRef.current = true;   // opening a thread is an act
+
     try {
       const data = await fetchConversation(token, id);
+      if (restore && userActedRef.current) return;
+
       setConversationId(data.id);
       setModeAndUrl(MODES_SET.includes(data.mode) ? data.mode : 'ask');
       setTurns(
@@ -307,10 +378,10 @@ export default function Ask() {
           query_log_id: t.id,
         }))
       );
-      localStorage.setItem(STORAGE_KEY, String(data.id));
+      thread.remember(data.id);
       setError('');
     } catch {
-      localStorage.removeItem(STORAGE_KEY);   // thread was deleted
+      thread.forget();   // thread was deleted
     }
   }
 
@@ -333,7 +404,7 @@ export default function Ask() {
     setConversationId(null);
     setError('');
     clearAttachment();
-    localStorage.removeItem(STORAGE_KEY);
+    thread.forget();
   }
 
   // Keeps `mode` and the ?mode= parameter in step. Everything that changes
@@ -348,6 +419,7 @@ export default function Ask() {
 
   function switchMode(next) {
     if (next === mode) return;   // a no-op click shouldn't wipe the thread
+    userActedRef.current = true;
     setModeAndUrl(next);
     clearThread();
     // Arguments needs a side before it can do anything, so ask up front
@@ -365,6 +437,7 @@ export default function Ask() {
   async function handleFilePicked(e) {
     const file = e.target.files?.[0];
     if (!file) return;
+    userActedRef.current = true;
 
     if (file.size > MAX_UPLOAD_BYTES) {
       setError('That file is larger than 10 MB. Try a smaller one.');
@@ -388,6 +461,7 @@ export default function Ask() {
   function startNew() {
     // Not switchMode: that returns early when the mode is unchanged, which
     // would make "New question" do nothing while already on Ask.
+    userActedRef.current = true;
     setModeAndUrl('ask');
     setSetupOpen(false);
     clearThread();
@@ -414,6 +488,7 @@ export default function Ask() {
   async function handleSubmit(e) {
     e.preventDefault();
     if (!canSubmit) return;
+    userActedRef.current = true;
 
     const prompt = input;
     const sentFile = canAttach ? attachment : null;
@@ -465,7 +540,7 @@ export default function Ask() {
 
         if (data.conversation_id) {
           setConversationId(data.conversation_id);
-          localStorage.setItem(STORAGE_KEY, String(data.conversation_id));
+          thread.remember(data.conversation_id);
         }
         turn = { kind: 'ask', ...data, prompt: bubble, file: sentFile?.filename };
         refreshHistory({ fresh: true });   // the new thread must appear now
@@ -478,7 +553,7 @@ export default function Ask() {
         });
         if (data.conversation_id) {
           setConversationId(data.conversation_id);
-          localStorage.setItem(STORAGE_KEY, String(data.conversation_id));
+          thread.remember(data.conversation_id);
         }
         turn = { kind: 'draft', ...data, prompt: bubble };
         refreshHistory({ fresh: true });   // the new thread must appear now
@@ -494,7 +569,7 @@ export default function Ask() {
         });
         if (data.conversation_id) {
           setConversationId(data.conversation_id);
-          localStorage.setItem(STORAGE_KEY, String(data.conversation_id));
+          thread.remember(data.conversation_id);
         }
         turn = { kind: 'review', ...data, prompt: bubble, file: sentFile?.filename };
         refreshHistory({ fresh: true });
@@ -516,11 +591,31 @@ export default function Ask() {
       setTurns((t) => [...t.slice(0, -1), turn]);
       clearAttachment();
     } catch (err) {
-      setTurns((t) => t.slice(0, -1));
-      setError(err.message);
-      setInput(prompt);
-      // The attachment is deliberately kept on failure - an out-of-scope
-      // rejection or a network blip shouldn't cost the user the upload.
+      if (err.terminal) {
+        // Refused, not dropped - an out-of-scope document, or input that
+        // wasn't a request. The pending turn becomes the refusal in place, so
+        // the thread reads as question-then-reply and the user can see what
+        // was rejected and why. The composer clears: resending the same thing
+        // would only be refused again, and leaving it in the box invites
+        // exactly that.
+        setTurns((t) => [
+          ...t.slice(0, -1),
+          {
+            kind: 'rejected',
+            prompt: bubble,
+            file: sentFile?.filename,
+            message: err.message,
+          },
+        ]);
+        clearAttachment();
+      } else {
+        // A blip - a dropped connection, a timeout. Roll the turn back and
+        // hand the question and the upload back so the same send can be
+        // retried without retyping or re-attaching.
+        setTurns((t) => t.slice(0, -1));
+        setError(err.message);
+        setInput(prompt);
+      }
     } finally {
       setLoading(false);
     }
@@ -851,6 +946,8 @@ export default function Ask() {
                       </div>
                     ) : t.kind === 'streaming' ? (
                       <StreamingAnswer body={t.body} />
+                    ) : t.kind === 'rejected' ? (
+                      <div className="ask-rejection">{t.message}</div>
                     ) : (
                       <>
                         {t.kind === 'ask' && <AskResult data={t} token={token} />}

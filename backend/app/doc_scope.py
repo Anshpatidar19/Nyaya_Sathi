@@ -1,9 +1,21 @@
-"""Scope gate for uploaded documents.
+"""Scope gates for what this system agrees to read and act on.
+
+Two gates live here:
+
+  check()          - uploaded documents
+  check_request()  - text the user typed into the box
 
 Nyaya Sathi answers questions about Indian law. A physics paper, a medical
 report or a restaurant menu is not something this system should summarise -
 not because summarising is hard, but because an answer wrapped in legal
 framing implies legal grounding that isn't there.
+
+The same reasoning applies to typed input. A keyboard mash is not a
+drafting instruction, but a generative model will happily treat it as one
+and return a plausible-looking legal notice built entirely of bracketed
+placeholders. That document is worse than no document: it looks like work
+product, so a user may act on it, and nothing in it came from anything they
+said. Refusing is the only honest answer.
 
 The gate runs in two stages so it stays cheap:
 
@@ -135,3 +147,138 @@ async def check(text: str, filename: str = "") -> Verdict:
     subject = (result.get("subject") or "").strip()
     detail = f" It looks like {subject} material." if subject else ""
     return Verdict(False, REJECTION + detail, "out of scope")
+
+# ---------------------------------------------------------------------------
+# Typed input
+# ---------------------------------------------------------------------------
+
+# Shorter than this isn't a request, whatever the characters are. Kept low so
+# that real short questions ("can I be evicted?") sail through.
+MIN_REQUEST_CHARS = 8
+
+# Runs of letters, Latin or Devanagari. Digits and punctuation are stripped
+# out first, so "85,000" and "12 August 2026" don't skew the word count.
+_WORD_RUN = re.compile(r"[A-Za-z\u0900-\u097F]+")
+
+# Any script that isn't Latin. Consonant-and-vowel heuristics are an English
+# assumption, so a question in Hindi, Tamil or Kannada must skip them
+# entirely - the alternative is refusing users who typed perfectly good
+# Devanagari because it has no "aeiou".
+_NON_LATIN = re.compile(r"[^\x00-\x7F]")
+
+# Legal shorthand people legitimately type, which the vowel test would
+# otherwise throw out.
+_KNOWN_SHORTHAND = {
+    "ipc", "crpc", "bns", "bnss", "bsa", "cpc", "rti", "fir", "nda", "mou",
+    "llp", "gst", "pan", "tds", "hra", "noc", "poa", "sc", "hc", "ni",
+}
+
+_VOWELS = set("aeiouy")
+
+
+def _word_like(token: str) -> bool:
+    """Could a person have meant to type this?
+
+    Not a dictionary check - it only asks whether the token has the shape of
+    a word in a language that uses vowels. "cheque" passes, "ghljdsglkd"
+    doesn't.
+    """
+    low = token.lower()
+    if low in _KNOWN_SHORTHAND:
+        return True
+    if len(low) > 20:                       # longer than any real English word
+        return False
+    if not (set(low) & _VOWELS):            # no vowel at all
+        return False
+
+    vowels = sum(1 for ch in low if ch in _VOWELS)
+
+    # Five or more consonants in a row happens in keyboard mash and almost
+    # nowhere else. A handful of real words ("strengths") trip it; that only
+    # matters if one is the entire request, and the multi-token rule below
+    # forgives it anywhere else.
+    run = 0
+    for ch in low:
+        run = 0 if ch in _VOWELS else run + 1
+        if run >= 5:
+            return False
+
+    # Long and starved of vowels. English runs around a third; "asdkjhaskjdh"
+    # is under a fifth.
+    if len(low) >= 8 and vowels / len(low) < 0.25:
+        return False
+
+    return True
+
+
+GIBBERISH = (
+    "That doesn't read as a request Nyaya Sathi can act on. Describe the "
+    "situation in a sentence or two — who is involved, what happened, and "
+    "what you need — and it will have something real to work from."
+)
+
+TOO_SHORT = (
+    "There isn't enough there to work from. Describe what you need in a "
+    "sentence or two."
+)
+
+
+def check_request(text: str, *, allow_short: bool = False) -> Verdict:
+    """Decide whether typed input is a real request.
+
+    allow_short waives the length floor for cases where a document carries
+    the context and the typed part is only a nudge - "summarise", "explain".
+    The gibberish tests still run.
+
+    Runs before retrieval and before any model call, because the failure this
+    prevents is the model being fluent about nothing: hand it a keyboard mash
+    and it returns a notice-shaped document with every fact bracketed. Cheap,
+    local and deterministic - no API call, so it costs nothing to run on
+    every request.
+
+    Deliberately conservative. It only refuses input it can positively show
+    is malformed; anything it cannot judge, including every non-Latin script,
+    passes through to the normal pipeline.
+    """
+    stripped = (text or "").strip()
+
+    if not stripped:
+        return Verdict(True, "", "empty") if allow_short else Verdict(
+            False, TOO_SHORT, "too short"
+        )
+
+    if not allow_short and len(stripped) < MIN_REQUEST_CHARS:
+        return Verdict(False, TOO_SHORT, "too short")
+
+    # Not English - the tests below don't apply, and guessing would refuse
+    # legitimate users. Let it through.
+    if _NON_LATIN.search(stripped):
+        return Verdict(True, "", "request")
+
+    tokens = _WORD_RUN.findall(stripped)
+
+    # All digits and punctuation, no letters anywhere.
+    if not tokens:
+        return Verdict(False, GIBBERISH, "gibberish")
+
+    # Punctuation soup: "gob';fk;ghljdsglkd" is mostly separators. Real
+    # writing sits well under this even with heavy comma use.
+    letters = sum(len(t) for t in tokens)
+    symbols = sum(1 for ch in stripped if not ch.isalnum() and not ch.isspace())
+    if letters and symbols > letters * 0.4:
+        return Verdict(False, GIBBERISH, "gibberish")
+
+    good = sum(1 for t in tokens if _word_like(t))
+
+    # One token, and it isn't word-shaped: "asdkjhaskjdh".
+    if len(tokens) == 1:
+        if not good:
+            return Verdict(False, GIBBERISH, "gibberish")
+        return Verdict(True, "", "request")
+
+    # Several tokens: refuse only when most of them are unreadable. A real
+    # request with one typo or an odd surname stays well above this.
+    if good / len(tokens) < 0.5:
+        return Verdict(False, GIBBERISH, "gibberish")
+
+    return Verdict(True, "", "request")
