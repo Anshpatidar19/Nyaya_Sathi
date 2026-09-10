@@ -14,7 +14,7 @@ from fastapi import (
 )
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import OAuth2PasswordRequestForm
-from sqlalchemy.orm import Session, selectinload
+from sqlalchemy.orm import Session, joinedload
 
 from . import (
     arguments,
@@ -656,12 +656,14 @@ def get_conversation(
 ):
     """Full thread, with each turn's original payload so a refreshed page
     renders the same citations and flags it showed live."""
-    # selectinload pulls the turns in the same trip. Without it the lazy
-    # relationship fires a second query the moment `.turns` is touched, which
-    # on a remote database is another full round trip.
+    # joinedload pulls the conversation AND its turns in ONE query (a LEFT
+    # JOIN), not two. On a remote database each round trip is the real cost,
+    # not the row count - selectinload's second query was doubling the wait
+    # on every single chat switch, which is what made this feel slow on a
+    # local backend talking to a remote Supabase database.
     convo = (
         db.query(models.Conversation)
-        .options(selectinload(models.Conversation.turns))
+        .options(joinedload(models.Conversation.turns))
         .filter(
             models.Conversation.id == conversation_id,
             models.Conversation.user_id == current_user.id,
@@ -881,6 +883,7 @@ def draft_types(current_user: models.User = Depends(get_current_user)):
 @app.post("/draft", response_model=schemas.DraftResponse)
 async def create_draft(
     payload: schemas.DraftRequest,
+    db: Session = Depends(get_db),
     current_user: models.User = Depends(get_current_user),
 ):
     if not payload.instructions.strip():
@@ -899,6 +902,27 @@ async def create_draft(
             status_code=422,
             detail="Not enough information to draft this. Add more detail and retry.",
         )
+
+    # Saved the same way /ask saves a turn, so drafts show up in the sidebar
+    # history and can be reopened later - this used to not happen at all.
+    title_seed = payload.instructions[:80]
+    convo = _get_or_create_conversation(
+        db, current_user, payload.conversation_id, title_seed, "draft"
+    )
+    log = models.QueryLog(
+        user_id=current_user.id,
+        conversation_id=convo.id,
+        mode="draft",
+        question=title_seed,
+        answer_title=result["title"],
+        answer_body=result["body"],
+        payload_json=json.dumps(result, default=str),
+    )
+    db.add(log)
+    convo.updated_at = datetime.datetime.utcnow()
+    db.commit()
+
+    result["conversation_id"] = convo.id
     return result
 
 
@@ -987,14 +1011,39 @@ async def review_document(
 
     try:
         result = await drafting.review(text, payload.doc_type, payload.context)
-        if filename:
-            if isinstance(result, dict):
-                result["document_name"] = filename
-            else:
-                result.document_name = filename
-        return result
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
     except Exception as exc:
         logger.exception("Review failed: %s", exc)
         raise HTTPException(status_code=503, detail="Could not review that document.")
+
+    if filename:
+        if isinstance(result, dict):
+            result["document_name"] = filename
+        else:
+            result.document_name = filename
+
+    # Same history save as /draft - a review is a turn too, and previously
+    # vanished the moment the response left the server.
+    title_seed = f"Review: {filename}" if filename else (payload.doc_type or "Document review")
+    convo = _get_or_create_conversation(
+        db, current_user, payload.conversation_id, title_seed[:80], "review"
+    )
+    log = models.QueryLog(
+        user_id=current_user.id,
+        conversation_id=convo.id,
+        mode="review",
+        question=title_seed[:80],
+        answer_title=result.get("summary", "Document review")[:120] if isinstance(result, dict) else "Document review",
+        answer_body=result.get("summary") if isinstance(result, dict) else None,
+        payload_json=json.dumps(result, default=str),
+    )
+    db.add(log)
+    convo.updated_at = datetime.datetime.utcnow()
+    db.commit()
+
+    if isinstance(result, dict):
+        result["conversation_id"] = convo.id
+    else:
+        result.conversation_id = convo.id
+    return result

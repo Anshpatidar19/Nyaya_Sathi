@@ -13,7 +13,7 @@ import datetime
 from typing import Dict, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy import func
+from sqlalchemy import func, literal
 from sqlalchemy.orm import Session
 
 from . import models, schemas, storage
@@ -75,11 +75,14 @@ def _counts(db: Session, matter_id: int) -> dict:
 
 
 def _counts_bulk(db: Session, matter_ids: List[int]) -> Dict[int, dict]:
-    """All four counts for every matter, in four grouped queries total.
+    """All four counts for every matter, in ONE round trip.
 
-    The per-matter version issued 4 counts + 1 next-hearing lookup for each
-    row. Twelve matters was sixty sequential round trips, which is why the
-    page took seconds to appear.
+    This used to be four separate GROUP BY queries - one per table. Each one
+    is cheap on the database itself, but on a remote database (Supabase, not
+    localhost) the network round trip dwarfs the query time, so four queries
+    meant paying that trip four times before the page could render. A UNION
+    ALL of all four, tagged with which table each row came from, is still
+    one statement - one round trip - no matter how many tables it covers.
     """
     blank = {
         "event_count": 0, "note_count": 0,
@@ -89,21 +92,26 @@ def _counts_bulk(db: Session, matter_ids: List[int]) -> Dict[int, dict]:
     if not matter_ids:
         return out
 
-    for key, model in (
-        ("event_count", models.MatterEvent),
-        ("note_count", models.MatterNote),
-        ("document_count", models.Document),
-        ("research_count", models.Conversation),
-    ):
-        rows = (
-            db.query(model.matter_id, func.count(model.id))
+    def part(model, key: str):
+        return (
+            db.query(
+                model.matter_id.label("matter_id"),
+                func.count(model.id).label("n"),
+                literal(key).label("kind"),
+            )
             .filter(model.matter_id.in_(matter_ids))
             .group_by(model.matter_id)
-            .all()
         )
-        for mid, count in rows:
-            if mid in out:
-                out[mid][key] = count
+
+    combined = part(models.MatterEvent, "event_count").union_all(
+        part(models.MatterNote, "note_count"),
+        part(models.Document, "document_count"),
+        part(models.Conversation, "research_count"),
+    )
+
+    for mid, n, kind in combined.all():
+        if mid in out:
+            out[mid][kind] = n
 
     return out
 

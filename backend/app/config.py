@@ -24,6 +24,14 @@ class Settings(BaseSettings):
     supabase_service_key: str = os.getenv("SUPABASE_SERVICE_KEY", "")
     # Public key, used for signup/login calls. Safe to expose.
     supabase_anon_key: str = os.getenv("SUPABASE_ANON_KEY", "")
+    # Dashboard -> Project Settings -> API -> JWT Settings -> "JWT Secret".
+    # Optional, but strongly recommended: with this set, get_current_user
+    # verifies a token's signature locally instead of calling Supabase's
+    # Auth API over the network on every request. That network call is what
+    # made every authenticated endpoint - not just chat history - slow.
+    # Leave unset and the app still works, just falls back to the network
+    # check (with its own short cache) exactly as before.
+    supabase_jwt_secret: str = os.getenv("SUPABASE_JWT_SECRET", "")
     # Where Supabase sends users after they click a confirmation or reset link.
     site_url: str = os.getenv("SITE_URL", "http://localhost:5173")  # service_role key
     supabase_bucket: str = os.getenv("SUPABASE_BUCKET", "user-documents")

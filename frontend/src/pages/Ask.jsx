@@ -174,8 +174,9 @@ function urlMode(params) {
   return MODES_SET.includes(m) ? m : 'ask';
 }
 
-// Only Ask threads are saved, so the other surfaces get their own heading and
-// an honest empty state rather than Ask's list under the wrong label.
+// Ask, Draft, and Review threads are all saved now. Arguments still isn't -
+// /arguments never writes a Conversation/QueryLog, unlike the other three -
+// so it keeps its own honest empty state.
 const MODE_LABEL = {
   ask: 'Recents',
   draft: 'Drafts',
@@ -184,8 +185,9 @@ const MODE_LABEL = {
 };
 
 const MODE_EMPTY = {
-  draft: 'Drafts are not saved yet — copy the text before you leave this page.',
-  review: 'Reviews are not saved yet — copy anything you need before you leave.',
+  ask: 'Nothing asked yet — try a question on the right.',
+  draft: 'Nothing drafted yet — describe what you need on the right.',
+  review: 'Nothing reviewed yet — paste or attach a document on the right.',
   argue: 'Argument sets are not saved yet — use Copy all before you leave.',
 };
 
@@ -314,6 +316,10 @@ export default function Ask() {
 
   const started = loading || turns.length > 0 || !!error;
   const modes = isAdvocate ? ALL_MODES : ALL_MODES.filter((m) => !m.advocateOnly);
+  // The sidebar list scoped to whichever surface is open - a draft thread
+  // has no business appearing under "Recents" while you're asking a
+  // question, and vice versa.
+  const visibleHistory = history.filter((h) => h.mode === mode);
   // Draft writes a document from a description; there is nothing to read in.
   const canAttach = mode === 'ask' || mode === 'review' || mode === 'argue';
   // With a file attached, Review needs no typing and Ask needs only a nudge.
@@ -468,8 +474,14 @@ export default function Ask() {
           doc_type: docType || null,
           instructions: prompt,
           details: null,
+          conversation_id: conversationId,
         });
+        if (data.conversation_id) {
+          setConversationId(data.conversation_id);
+          localStorage.setItem(STORAGE_KEY, String(data.conversation_id));
+        }
         turn = { kind: 'draft', ...data, prompt: bubble };
+        refreshHistory({ fresh: true });   // the new thread must appear now
       } else if (mode === 'review') {
         const data = await reviewDocument(token, {
           // A pasted clause and an uploaded file are both valid; the backend
@@ -478,8 +490,14 @@ export default function Ask() {
           document_id: sentFile?.id,
           doc_type: docType || null,
           context: null,
+          conversation_id: conversationId,
         });
+        if (data.conversation_id) {
+          setConversationId(data.conversation_id);
+          localStorage.setItem(STORAGE_KEY, String(data.conversation_id));
+        }
         turn = { kind: 'review', ...data, prompt: bubble, file: sentFile?.filename };
+        refreshHistory({ fresh: true });
       } else if (mode === 'argue') {
         const data = await generateArguments(token, {
           facts: prompt.trim() || null,
@@ -700,17 +718,19 @@ export default function Ask() {
 
           <div className="ask-sidebar-divider" />
 
-          <h4>{mode === 'ask' ? 'Recents' : MODE_LABEL[mode]}</h4>
+          <h4>{MODE_LABEL[mode]}</h4>
           <div className="ask-history-list">
-            {mode !== 'ask' && (
-              <div className="history-empty">
-                {MODE_EMPTY[mode]}
-              </div>
+            {/* Arguments has no saved history at all - always the empty
+                state. Ask/Draft/Review share one list, filtered to the
+                surface you're on, so switching tools doesn't show another
+                tool's threads under this one's heading. */}
+            {mode === 'argue' && (
+              <div className="history-empty">{MODE_EMPTY.argue}</div>
             )}
-            {mode === 'ask' && history.length === 0 && (
-              <div className="history-empty">Nothing asked yet — try a question on the right.</div>
+            {mode !== 'argue' && visibleHistory.length === 0 && (
+              <div className="history-empty">{MODE_EMPTY[mode]}</div>
             )}
-            {mode === 'ask' && history.map((h) => (
+            {mode !== 'argue' && visibleHistory.map((h) => (
               <div
                 className={`history-item ${h.id === conversationId ? 'active' : ''}`}
                 key={h.id}

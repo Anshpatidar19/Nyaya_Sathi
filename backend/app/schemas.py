@@ -141,6 +141,9 @@ class DraftRequest(BaseModel):
     doc_type: Optional[str] = None
     instructions: str
     details: Optional[dict] = None
+    # Omit to start a new thread; pass an id to continue one (e.g. redrafting
+    # after feedback), same convention as AskRequest.
+    conversation_id: Optional[int] = None
 
 
 class DraftCitation(BaseModel):
@@ -156,6 +159,9 @@ class DraftResponse(BaseModel):
     missing_information: list[str] = []
     notes: list[str] = []
     needs_advocate: bool = False
+    # Returned so the client can continue the thread and so it shows up in
+    # /conversations and /ask/history, same as an ask turn does.
+    conversation_id: Optional[int] = None
 
 
 class ReviewRequest(BaseModel):
@@ -163,6 +169,7 @@ class ReviewRequest(BaseModel):
     document_id: Optional[int] = None      # review a previously uploaded file
     doc_type: Optional[str] = None
     context: Optional[str] = None
+    conversation_id: Optional[int] = None
 
 
 class ReviewFlag(BaseModel):
@@ -181,6 +188,7 @@ class ReviewResponse(BaseModel):
     missing_clauses: list[str] = []
     truncated: bool = False
     document_name: Optional[str] = None
+    conversation_id: Optional[int] = None
 
 
 # ---------- Password reset ----------
