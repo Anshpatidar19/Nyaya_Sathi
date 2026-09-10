@@ -454,3 +454,36 @@ export async function reviewDocument(
   });
   return handle(res);
 }
+
+// Downloads a generated draft as a .docx. Not JSON, so it doesn't go
+// through handle() - a blob is saved straight to disk via a throwaway link,
+// the same trick every "download this file" button in a browser uses.
+export async function downloadDraftDocx(token, queryLogId) {
+  const res = await fetch(`${BASE_URL}/draft/${queryLogId}/docx`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!res.ok) {
+    let detail = 'Could not download that draft.';
+    try {
+      const body = await res.json();
+      detail = body.detail || detail;
+    } catch (_) {
+      /* non-JSON error body */
+    }
+    throw new Error(detail);
+  }
+
+  const blob = await res.blob();
+  const disposition = res.headers.get('Content-Disposition') || '';
+  const match = disposition.match(/filename="?([^"]+)"?/);
+  const filename = match ? match[1] : 'draft.docx';
+
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}

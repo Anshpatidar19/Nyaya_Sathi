@@ -1,10 +1,11 @@
 import { useEffect, useRef, useState } from 'react';
 
 /* A native <select> decides for itself which way to open, and near the bottom
-   of the viewport it flips upward and covers the conversation. This one always
-   opens downward, so it never hides what you were reading. It also sits inline
-   in the composer's action row, which a native select can't be made to do
-   without looking out of place. */
+   of the viewport it flips upward and covers the conversation. This one
+   defaults to opening downward, with the composer-dock placement (the only
+   place it's actually used) overridden in CSS to open upward instead - see
+   .dock-box .dts-menu in styles.css - since that placement always sits at
+   the bottom of the screen and downward would put the menu off-screen. */
 
 const CHEVRON = (
   <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.8"

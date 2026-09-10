@@ -12,6 +12,7 @@ import {
   translateText,
   createDraft,
   deleteConversation,
+  downloadDraftDocx,
   fetchConversation,
   fetchConversations,
   fetchArgumentSides,
@@ -744,9 +745,11 @@ export default function Ask() {
     </div>
   );
 
-  // Sits inline in the composer's action row rather than above the box, and
-  // always opens downward - the native select was flipping upward near the
-  // bottom of the screen and covering the answer.
+  // Sits inline in the composer's action row rather than above the box.
+  // Opens upward (see .dock-box .dts-menu in styles.css) since the composer
+  // sits at the bottom of the screen - opening downward, the default meant
+  // to stop a native select covering the answer, would push the menu off
+  // the bottom of the viewport here instead.
   const docSelect = mode !== 'ask' && mode !== 'argue' && (
     <DocTypeSelect
       value={docType}
@@ -1200,6 +1203,8 @@ function DraftResult({ data, onCopy, copied, token }) {
   const [busy, setBusy] = useState(false);
   const [failed, setFailed] = useState('');
   const [versions, setVersions] = useState({ en: data.body });
+  const [downloading, setDownloading] = useState(false);
+  const [downloadError, setDownloadError] = useState('');
 
   const shown = versions[lang] ?? versions.en;
 
@@ -1220,14 +1225,42 @@ function DraftResult({ data, onCopy, copied, token }) {
     }
   }
 
+  async function handleDownload() {
+    if (downloading || !data.query_log_id) return;
+    setDownloadError('');
+    setDownloading(true);
+    try {
+      await downloadDraftDocx(token, data.query_log_id);
+    } catch (err) {
+      setDownloadError(err.message || 'Could not download that draft.');
+    } finally {
+      setDownloading(false);
+    }
+  }
+
   return (
     <div className="demo-card">
       <div className="demo-topbar">
         <div className="demo-brand"><span className="sq">न्या</span> Draft</div>
-        <button type="button" className="copy-btn" onClick={() => onCopy(shown)}>
-          {copied ? 'Copied' : 'Copy text'}
-        </button>
+        <div className="demo-topbar-actions">
+          <button type="button" className="copy-btn" onClick={() => onCopy(shown)}>
+            {copied ? 'Copied' : 'Copy text'}
+          </button>
+          {/* query_log_id is only missing for a draft that predates this
+              feature and was never reopened (so no id came back yet). */}
+          <button
+            type="button"
+            className="copy-btn"
+            onClick={handleDownload}
+            disabled={downloading || !data.query_log_id}
+            title={!data.query_log_id ? 'Reopen this draft once to enable downloading' : undefined}
+          >
+            {downloading ? 'Preparing…' : 'Download Word'}
+          </button>
+        </div>
       </div>
+
+      {downloadError && <p className="lang-error">{downloadError}</p>}
 
       {data.needs_advocate && (
         <div className="advocate-warning">
