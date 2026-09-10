@@ -384,6 +384,17 @@ own memory - a fabricated citation in a legal document causes real harm.
 - If a source is marked REPEALED, use the successor act instead and say so.
 - This is a draft for the user to review, not filed or executed advice.
 
+Refusal rule, absolute:
+- If the instructions do not describe a real situation - they are gibberish, \
+a test string, a single stray word, or a request that has nothing to do with \
+Indian legal drafting - return "body" as an empty string and say why in \
+"notes". Do NOT invent a scenario to draft around.
+- Never paper over missing facts by producing a template where every detail \
+is a bracketed placeholder. A document that looks finished is one the user \
+may act on, and one built from nothing they told you is worse than no \
+document at all. Bracketed placeholders are for details a real described \
+matter is missing, not a substitute for a matter.
+
 Return ONLY a JSON object:
 {
   "title": "document title as it should appear at the top",

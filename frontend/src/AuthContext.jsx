@@ -3,6 +3,28 @@ import { fetchMe, loginUser, registerUser } from './api';
 
 const AuthContext = createContext(null);
 
+// Which thread the Ask page reopens after a page reload. It lives here rather
+// than in the page because it is session-scoped: it has to be cleared whenever
+// the session changes hands, and only this file knows when that happens.
+//
+// Kept in sessionStorage, not localStorage. A pointer to "the thread I was
+// reading" belongs to one tab and dies with it; in localStorage it outlived
+// the tab, the session and the account, which is how logging in used to drop
+// people back into a conversation from days earlier - sometimes someone
+// else's, on a shared browser.
+export const ACTIVE_CONVERSATION_KEY = 'ns_active_conversation';
+
+// Signing in or out starts a clean slate. localStorage is swept too, to clear
+// the key left behind by builds that stored it there.
+function clearActiveConversation() {
+  try {
+    sessionStorage.removeItem(ACTIVE_CONVERSATION_KEY);
+    localStorage.removeItem(ACTIVE_CONVERSATION_KEY);
+  } catch (_) {
+    /* private mode, storage disabled - nothing to clear */
+  }
+}
+
 export function AuthProvider({ children }) {
   const [token, setToken] = useState(() => localStorage.getItem('ns_token'));
   const [user, setUser] = useState(null);
@@ -24,6 +46,9 @@ export function AuthProvider({ children }) {
 
   async function login(credentials) {
     const data = await loginUser(credentials);
+    // Before the token lands: the Ask page restores off this key the moment
+    // it sees a token, so clearing it afterwards would be the same race.
+    clearActiveConversation();
     localStorage.setItem('ns_token', data.access_token);
     setToken(data.access_token);
     setUser(data.user);
@@ -35,6 +60,7 @@ export function AuthProvider({ children }) {
     // With email confirmation on there is no session yet - the caller shows
     // a "check your inbox" screen instead of navigating into the app.
     if (data.access_token) {
+      clearActiveConversation();
       localStorage.setItem('ns_token', data.access_token);
       setToken(data.access_token);
       setUser(data.user);
@@ -43,6 +69,7 @@ export function AuthProvider({ children }) {
   }
 
   function logout() {
+    clearActiveConversation();
     localStorage.removeItem('ns_token');
     setToken(null);
     setUser(null);
