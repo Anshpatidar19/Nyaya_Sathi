@@ -27,12 +27,16 @@ const ROLES = [
     id: 'advocate',
     label: 'Advocate',
     hint: 'Research case law, draft documents, and red-line contracts',
+    // Scales of justice - the recognizable legal symbol, rather than the
+    // previous courthouse-pillars icon which read ambiguously at this size.
     icon: (
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6"
            strokeLinecap="round" strokeLinejoin="round">
-        <path d="M12 3v18M5 21h14" />
-        <path d="M3 9l4-4 4 4M3 9a2 2 0 0 0 4 0 2 2 0 0 0 4 0" />
-        <path d="M13 9l4-4 4 4M13 9a2 2 0 0 0 4 0 2 2 0 0 0 4 0" />
+        <path d="M12 3v15" />
+        <path d="M8 21h8" />
+        <path d="M5 7h5M14 7h5" />
+        <path d="M5 7l-3 6a3 3 0 0 0 6 0z" />
+        <path d="M19 7l-3 6a3 3 0 0 0 6 0z" />
       </svg>
     ),
   },

@@ -1,6 +1,7 @@
 import datetime
 import json
 import logging
+import re
 
 import httpx
 from fastapi import (
@@ -952,10 +953,73 @@ async def create_draft(
     )
     db.add(log)
     convo.updated_at = datetime.datetime.utcnow()
+    # flush (not commit) assigns log.id right away, without the extra round
+    # trip that reading it back AFTER commit would cost - session-per-request
+    # already expires attributes on commit, so this avoids paying for that.
+    db.flush()
+    query_log_id = log.id
     db.commit()
 
     result["conversation_id"] = convo.id
+    result["query_log_id"] = query_log_id
     return result
+
+
+def _docx_filename(title: str) -> str:
+    """A safe, readable .docx filename from a draft's title."""
+    slug = re.sub(r"[^\w\s-]", "", title or "draft").strip()
+    slug = re.sub(r"[\s_-]+", "-", slug).strip("-").lower()
+    return f"{slug or 'draft'}.docx"
+
+
+@app.get("/draft/{query_log_id}/docx")
+async def download_draft_docx(
+    query_log_id: int,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user),
+):
+    """Download a generated draft as a Word document.
+
+    Rebuilds the .docx from the SAVED payload, not by asking Gemini again -
+    so what downloads is exactly what was shown and reviewed on screen, not
+    a fresh (and possibly different) generation.
+    """
+    log = (
+        db.query(models.QueryLog)
+        .filter(
+            models.QueryLog.id == query_log_id,
+            models.QueryLog.user_id == current_user.id,
+            models.QueryLog.mode == "draft",
+        )
+        .first()
+    )
+    if not log:
+        raise HTTPException(status_code=404, detail="Draft not found.")
+
+    data = {}
+    if log.payload_json:
+        try:
+            data = json.loads(log.payload_json)
+        except json.JSONDecodeError:
+            data = {}
+
+    title = data.get("title") or log.answer_title or "Draft document"
+    try:
+        buf = drafting.to_docx(
+            title=title,
+            body=data.get("body") or log.answer_body or "",
+            citations=data.get("citations") or [],
+            missing_information=data.get("missing_information") or [],
+            notes=data.get("notes") or [],
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=503, detail=str(exc))
+
+    return StreamingResponse(
+        buf,
+        media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        headers={"Content-Disposition": f'attachment; filename="{_docx_filename(title)}"'},
+    )
 
 
 @app.get("/arguments/sides")

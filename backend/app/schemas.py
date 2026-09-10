@@ -162,6 +162,9 @@ class DraftResponse(BaseModel):
     # Returned so the client can continue the thread and so it shows up in
     # /conversations and /ask/history, same as an ask turn does.
     conversation_id: Optional[int] = None
+    # Lets the client translate (existing feature) or download this draft as
+    # Word without waiting for a page reload first.
+    query_log_id: Optional[int] = None
 
 
 class ReviewRequest(BaseModel):

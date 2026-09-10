@@ -593,3 +593,59 @@ def extract_text(data: bytes, content_type: str, filename: str = "") -> str:
         "Only PDF, Word (.docx) and plain text documents can be reviewed. "
         "Scanned images would need OCR."
     )
+
+
+# ---------------------------------------------------------------------------
+# Word export
+# ---------------------------------------------------------------------------
+
+def to_docx(
+    title: str,
+    body: str,
+    citations: Optional[List[Dict[str, Any]]] = None,
+    missing_information: Optional[List[str]] = None,
+    notes: Optional[List[str]] = None,
+):
+    """Render an already-generated draft as a .docx file, in memory.
+
+    Takes the same fields draft() already returned - never calls Gemini or
+    retrieval again - so the download can never drift from what was shown
+    and reviewed on screen. Returns a BytesIO positioned at the start,
+    ready to stream straight back as a response body.
+    """
+    try:
+        import docx
+        import io
+    except ImportError:
+        raise ValueError("Word export needs python-docx: pip install python-docx")
+
+    document = docx.Document()
+    document.add_heading(title or "Draft document", level=1)
+
+    # Line by line, not paragraph-by-paragraph on a blank-line split: a
+    # numbered clause list has one clause per line, and collapsing those
+    # into one paragraph would lose the structure the draft was written in.
+    for line in (body or "").split("\n"):
+        document.add_paragraph(line)
+
+    if missing_information:
+        document.add_heading("Still needed", level=2)
+        for item in missing_information:
+            document.add_paragraph(str(item), style="List Bullet")
+
+    if notes:
+        document.add_heading("Notes", level=2)
+        for item in notes:
+            document.add_paragraph(str(item), style="List Bullet")
+
+    if citations:
+        document.add_heading("Statutory basis", level=2)
+        for c in citations:
+            name = (c or {}).get("title") or ""
+            source = (c or {}).get("source") or ""
+            document.add_paragraph(f"{name} — {source}" if source else name, style="List Bullet")
+
+    buf = io.BytesIO()
+    document.save(buf)
+    buf.seek(0)
+    return buf
