@@ -54,7 +54,14 @@ async function handle(res) {
     } catch (_) {
       /* non-JSON error body */
     }
-    throw new Error(detail);
+    const err = new Error(detail);
+    err.status = res.status;
+    // 422 is the scope gate refusing a document: the request was well formed,
+    // the content just isn't something this platform reads. Sending the same
+    // file again can only be refused again, so callers treat it as a reply to
+    // show rather than a failure to retry.
+    err.terminal = res.status === 422;
+    throw err;
   }
   return res.json();
 }

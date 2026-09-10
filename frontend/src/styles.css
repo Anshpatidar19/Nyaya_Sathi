@@ -499,6 +499,18 @@ footer.site-footer{border-top:1px solid var(--line); padding:56px 0 34px; margin
   display:flex; align-items:center; gap:10px;
   color:var(--ink-muted); font-size:14px; padding:6px 2px;
 }
+/* A refused document reads as the reply to its own turn, so it sits where an
+   answer would sit - left-aligned, in the thread - rather than as a banner
+   pinned under the whole conversation. */
+.ask-rejection{
+  align-self:flex-start; max-width:80%;
+  background:#FBECEA; border:1px solid #F0CFC9; color:var(--danger);
+  padding:12px 16px; border-radius:18px 18px 18px 4px;
+  font-size:14px; line-height:1.6;
+}
+:root[data-theme="dark"] .ask-rejection{
+  background:rgba(224,119,106,.12); border-color:rgba(224,119,106,.35);
+}
 /* Thin composer. Everything optional (doc type, arguments settings, the
    attached file) stacks above a single pill so the dock stays one line tall
    until the user actually types. */

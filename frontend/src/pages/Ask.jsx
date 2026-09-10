@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
-import { useAuth } from '../AuthContext';
+import { useAuth, ACTIVE_CONVERSATION_KEY } from '../AuthContext';
 import ThemeToggle from '../components/ThemeToggle';
 import ArgumentsResult from '../components/ArgumentsResult';
 import ArgumentsSetup from '../components/ArgumentsSetup';
@@ -165,7 +165,9 @@ const CHIPS = {
   argue: [],
 };
 
-const STORAGE_KEY = 'ns_active_conversation';
+// Owned by AuthContext, which has to clear it on login and logout. Aliased
+// here so the two files can never disagree about the key name.
+const STORAGE_KEY = ACTIVE_CONVERSATION_KEY;
 
 const MODES_SET = ['ask', 'draft', 'review', 'argue'];
 
@@ -230,14 +232,27 @@ export default function Ask() {
   const [setupOpen, setSetupOpen] = useState(false);
   const threadEndRef = useRef(null);
   const fileInputRef = useRef(null);
+  // True once the user has done anything that owns the screen - sent a
+  // question, attached a file, switched tools, started a new thread, or
+  // opened a thread from the sidebar. The restore below is a convenience and
+  // must never paint over any of those, however late its fetch resolves.
+  const userActedRef = useRef(false);
 
   useEffect(() => {
     if (!token) return;
     refreshHistory();
 
     // Restore the last thread so a refresh doesn't wipe the screen.
+    //
+    // Two things must not trigger it. A fresh login: AuthContext clears the
+    // key on the way in, so there is nothing to find and the session starts
+    // on a new question. And a URL that names its own mode - that is someone
+    // arriving from Matters to open Draft or Review, and restoring an older
+    // Ask thread would drag them straight back out of the tool they picked.
+    if (searchParams.get('mode')) return;
+
     const saved = localStorage.getItem(STORAGE_KEY);
-    if (saved) loadConversation(Number(saved));
+    if (saved) loadConversation(Number(saved), { restore: true });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [token]);
 
@@ -289,9 +304,22 @@ export default function Ask() {
     fetchConversations(token, { fresh }).then(setHistory).catch(() => {});
   }
 
-  async function loadConversation(id) {
+  async function loadConversation(id, { restore = false } = {}) {
+    // A restore that resolves after the user has already moved on must be
+    // dropped, not applied. This was the bug that pulled people into their
+    // previous thread the moment they asked something after logging in: the
+    // question went out, the restore landed a beat later, and its setTurns
+    // and setConversationId overwrote the question that was in flight.
+    //
+    // Checked twice on purpose - once before the fetch, once after - because
+    // the user can act during the round trip.
+    if (restore && userActedRef.current) return;
+    if (!restore) userActedRef.current = true;   // opening a thread is an act
+
     try {
       const data = await fetchConversation(token, id);
+      if (restore && userActedRef.current) return;
+
       setConversationId(data.id);
       setModeAndUrl(MODES_SET.includes(data.mode) ? data.mode : 'ask');
       setTurns(
@@ -342,6 +370,7 @@ export default function Ask() {
 
   function switchMode(next) {
     if (next === mode) return;   // a no-op click shouldn't wipe the thread
+    userActedRef.current = true;
     setModeAndUrl(next);
     clearThread();
     // Arguments needs a side before it can do anything, so ask up front
@@ -359,6 +388,7 @@ export default function Ask() {
   async function handleFilePicked(e) {
     const file = e.target.files?.[0];
     if (!file) return;
+    userActedRef.current = true;
 
     if (file.size > MAX_UPLOAD_BYTES) {
       setError('That file is larger than 10 MB. Try a smaller one.');
@@ -382,6 +412,7 @@ export default function Ask() {
   function startNew() {
     // Not switchMode: that returns early when the mode is unchanged, which
     // would make "New question" do nothing while already on Ask.
+    userActedRef.current = true;
     setModeAndUrl('ask');
     setSetupOpen(false);
     clearThread();
@@ -408,6 +439,7 @@ export default function Ask() {
   async function handleSubmit(e) {
     e.preventDefault();
     if (!canSubmit) return;
+    userActedRef.current = true;
 
     const prompt = input;
     const sentFile = canAttach ? attachment : null;
@@ -498,11 +530,30 @@ export default function Ask() {
       setTurns((t) => [...t.slice(0, -1), turn]);
       clearAttachment();
     } catch (err) {
-      setTurns((t) => t.slice(0, -1));
-      setError(err.message);
-      setInput(prompt);
-      // The attachment is deliberately kept on failure - an out-of-scope
-      // rejection or a network blip shouldn't cost the user the upload.
+      if (err.terminal) {
+        // The document was refused, not dropped. The pending turn becomes the
+        // refusal in place, so the thread reads as question-then-reply and the
+        // user can see which file was rejected and why. The composer clears:
+        // resending the same file would only be refused again, and leaving it
+        // in the box invites exactly that.
+        setTurns((t) => [
+          ...t.slice(0, -1),
+          {
+            kind: 'rejected',
+            prompt: bubble,
+            file: sentFile?.filename,
+            message: err.message,
+          },
+        ]);
+        clearAttachment();
+      } else {
+        // A blip - a dropped connection, a timeout. Roll the turn back and
+        // hand the question and the upload back so the same send can be
+        // retried without retyping or re-attaching.
+        setTurns((t) => t.slice(0, -1));
+        setError(err.message);
+        setInput(prompt);
+      }
     } finally {
       setLoading(false);
     }
@@ -831,6 +882,8 @@ export default function Ask() {
                       </div>
                     ) : t.kind === 'streaming' ? (
                       <StreamingAnswer body={t.body} />
+                    ) : t.kind === 'rejected' ? (
+                      <div className="ask-rejection">{t.message}</div>
                     ) : (
                       <>
                         {t.kind === 'ask' && <AskResult data={t} token={token} />}
