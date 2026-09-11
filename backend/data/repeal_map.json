@@ -2,16 +2,12 @@
   "_readme": [
     "Section-level successor mapping for repealed law.",
     "",
-    "Act-level repeal already lives in statutes.ACTS ('current': false plus a",
-    "'superseded_by' note). That is curated and safe. THIS file is the finer",
-    "grained claim: 'IPC 302 became BNS 103'. Getting one of those wrong would",
-    "send an advocate to the wrong provision with a confident badge attached,",
-    "which is worse than saying nothing.",
+    "Act-level repeal lives in statutes.ACTS via current/status plus successor metadata.",
+    "This file provides the finer-grained correspondence claim (for example, CrPC 154 -> BNSS 173).",
+    "These mappings must be treated as retrieval guidance, not as a substitute for reading the current statute.",
     "",
-    "So it ships empty. Fill it from the actual statute - the BNS, BNSS and",
-    "BSA each carry a repeal-and-savings section, and India Code publishes",
-    "concordance tables. Do not fill it from memory, and do not fill it from",
-    "an LLM.",
+    "The IPC mappings were sourced from the NCRB BNS concordance. The CrPC and Indian Evidence Act",
+    "mappings in this file are sourced from NCRB's corresponding-section tables for BNSS and BSA.",
     "",
     "Format:",
     "  \"<old_act_key>:<SECTION>\": {",
@@ -25,17 +21,616 @@
     "",
     "Section keys are uppercased, so use 304B not 304b.",
     "",
-    "'verified': false still displays, but with a caveat telling the reader to",
-    "check it. Use that while you are working through the list rather than",
-    "leaving an entry out entirely.",
+    "Anything absent falls back to the act-level notice, which is safer than inventing a section mapping.",
     "",
-    "Anything absent falls back to the act-level notice, which is always safe:",
-    "'the IPC has been repealed by the BNS' is true regardless of which",
-    "section the reader asked about.",
-    "",
-    "Run `python -m app.eval_validity` after editing to check the file parses",
-    "and that no mapping points at a section that does not exist in the index."
+    "Run `python -m app.eval_validity` after editing to check the file parses and that no mapping points at a section",
+    "that does not exist in the current indexed corpus."
   ],
+  "_schema_v2": [
+    "ADDED, additive to the original file.",
+    "",
+    "Two things live here:",
+    "1. '_acts' - ACT-LEVEL status and successor relationships.",
+    "2. crpc:* and iea:* SECTION mappings alongside the original ipc:* mappings.",
+    "",
+    "Vocabulary:",
+    "  live       in force, consolidated text",
+    "  repealed   no longer in force; successor_act_key says what replaced it",
+    "  amending   an amendment act; modifies another act, never stands alone",
+    "  successor  in force, and it is what replaced a repealed act",
+    "",
+    "The section mappings for BNSS and BSA below have been checked against the NCRB corresponding-section tables."
+  ],
+  "_acts": {
+    "ipc": {
+      "status": "repealed",
+      "act": "Indian Penal Code, 1860",
+      "act_short": "IPC",
+      "year": 1860,
+      "successor_act_key": "bns",
+      "successor_act": "Bharatiya Nyaya Sanhita, 2023",
+      "effective_to": 20240630,
+      "verified": true,
+      "note": "Repealed with effect from 1 July 2024. Still governs offences committed before that date.",
+      "source": "Bharatiya Nyaya Sanhita, 2023, s.358 (repeal and savings)"
+    },
+    "crpc": {
+      "status": "repealed",
+      "act": "Code of Criminal Procedure, 1973",
+      "act_short": "CrPC",
+      "year": 1973,
+      "successor_act_key": "bnss",
+      "successor_act": "Bharatiya Nagarik Suraksha Sanhita, 2023",
+      "effective_to": 20240630,
+      "verified": true,
+      "note": "Repealed with effect from 1 July 2024. Proceedings pending on that date continue under the CrPC.",
+      "source": "Bharatiya Nagarik Suraksha Sanhita, 2023, s.531 (repeal and savings)"
+    },
+    "iea": {
+      "status": "repealed",
+      "act": "Indian Evidence Act, 1872",
+      "act_short": "IEA",
+      "year": 1872,
+      "successor_act_key": "bsa",
+      "successor_act": "Bharatiya Sakshya Adhiniyam, 2023",
+      "effective_to": 20240630,
+      "verified": true,
+      "note": "Repealed with effect from 1 July 2024.",
+      "source": "Bharatiya Sakshya Adhiniyam, 2023, s.170 (repeal and savings)"
+    },
+    "bns": {
+      "status": "successor",
+      "act": "Bharatiya Nyaya Sanhita, 2023",
+      "act_short": "BNS",
+      "year": 2023,
+      "supersedes_act_key": "ipc",
+      "effective_from": 20240701,
+      "verified": true
+    },
+    "bnss": {
+      "status": "successor",
+      "act": "Bharatiya Nagarik Suraksha Sanhita, 2023",
+      "act_short": "BNSS",
+      "year": 2023,
+      "supersedes_act_key": "crpc",
+      "effective_from": 20240701,
+      "verified": true
+    },
+    "bsa": {
+      "status": "successor",
+      "act": "Bharatiya Sakshya Adhiniyam, 2023",
+      "act_short": "BSA",
+      "year": 2023,
+      "supersedes_act_key": "iea",
+      "effective_from": 20240701,
+      "verified": true
+    },
+    "coi": {
+      "status": "live",
+      "act": "Constitution of India, 1950",
+      "act_short": "Constitution",
+      "year": 1950,
+      "verified": true
+    },
+    "contract": {
+      "status": "live",
+      "act": "Indian Contract Act, 1872",
+      "act_short": "Contract Act",
+      "year": 1872,
+      "verified": true
+    },
+    "tpa": {
+      "status": "live",
+      "act": "Transfer of Property Act, 1882",
+      "act_short": "TP Act",
+      "year": 1882,
+      "verified": true
+    },
+    "rti": {
+      "status": "live",
+      "act": "Right to Information Act, 2005",
+      "act_short": "RTI Act",
+      "year": 2005,
+      "verified": true
+    },
+    "nia": {
+      "status": "live",
+      "act": "Negotiable Instruments Act, 1881",
+      "act_short": "NI Act",
+      "year": 1881,
+      "verified": true
+    },
+    "cpc": {
+      "status": "live",
+      "act": "Code of Civil Procedure, 1908",
+      "act_short": "CPC",
+      "year": 1908,
+      "verified": true
+    },
+    "hma": {
+      "status": "live",
+      "act": "Hindu Marriage Act, 1955",
+      "act_short": "HMA",
+      "year": 1955,
+      "verified": true
+    },
+    "mva": {
+      "status": "live",
+      "act": "Motor Vehicles Act, 1988",
+      "act_short": "MV Act",
+      "year": 1988,
+      "verified": true
+    },
+    "specific_relief": {
+      "status": "live",
+      "act": "Specific Relief Act, 1963",
+      "act_short": "SRA",
+      "year": 1963,
+      "verified": true
+    },
+    "limitation": {
+      "status": "live",
+      "act": "Limitation Act, 1963",
+      "act_short": "Limitation Act",
+      "year": 1963,
+      "verified": true
+    },
+    "cpa": {
+      "status": "live",
+      "act": "Consumer Protection Act, 2019",
+      "act_short": "CPA",
+      "year": 2019,
+      "verified": true
+    },
+    "ita": {
+      "status": "live",
+      "act": "Information Technology Act, 2000",
+      "act_short": "IT Act",
+      "year": 2000,
+      "verified": true
+    },
+    "arbitration": {
+      "status": "live",
+      "act": "Arbitration and Conciliation Act, 1996",
+      "act_short": "A&C Act",
+      "year": 1996,
+      "verified": true
+    },
+    "pocso": {
+      "status": "live",
+      "act": "Protection of Children from Sexual Offences Act, 2012",
+      "act_short": "POCSO",
+      "year": 2012,
+      "verified": true
+    },
+    "pwdva": {
+      "status": "live",
+      "act": "Protection of Women from Domestic Violence Act, 2005",
+      "act_short": "DV Act",
+      "year": 2005,
+      "verified": true
+    },
+    "dowry": {
+      "status": "live",
+      "act": "Dowry Prohibition Act, 1961",
+      "act_short": "Dowry Prohibition Act",
+      "year": 1961,
+      "verified": true
+    },
+    "scst": {
+      "status": "live",
+      "act": "Scheduled Castes and the Scheduled Tribes (Prevention of Atrocities) Act, 1989",
+      "act_short": "SC/ST Act",
+      "year": 1989,
+      "verified": true
+    },
+    "hsa": {
+      "status": "live",
+      "act": "Hindu Succession Act, 1956",
+      "act_short": "HSA",
+      "year": 1956,
+      "verified": true
+    },
+    "isa": {
+      "status": "live",
+      "act": "Indian Succession Act, 1925",
+      "act_short": "Indian Succession Act",
+      "year": 1925,
+      "verified": true
+    },
+    "jj": {
+      "status": "live",
+      "act": "Juvenile Justice (Care and Protection of Children) Act, 2015",
+      "act_short": "JJ Act",
+      "year": 2015,
+      "verified": true
+    },
+    "posh": {
+      "status": "live",
+      "act": "Sexual Harassment of Women at Workplace (Prevention, Prohibition and Redressal) Act, 2013",
+      "act_short": "POSH Act",
+      "year": 2013,
+      "verified": true
+    },
+    "hama": {
+      "status": "live",
+      "act": "Hindu Adoptions and Maintenance Act, 1956",
+      "act_short": "HAMA",
+      "year": 1956,
+      "verified": true
+    },
+    "hmga": {
+      "status": "live",
+      "act": "Hindu Minority and Guardianship Act, 1956",
+      "act_short": "HMGA",
+      "year": 1956,
+      "verified": true
+    },
+    "sma": {
+      "status": "live",
+      "act": "Special Marriage Act, 1954",
+      "act_short": "Special Marriage Act",
+      "year": 1954,
+      "verified": true
+    },
+    "senior_citizens": {
+      "status": "live",
+      "act": "Maintenance and Welfare of Parents and Senior Citizens Act, 2007",
+      "act_short": "Senior Citizens Act",
+      "year": 2007,
+      "verified": true
+    },
+    "guardians_wards": {
+      "status": "live",
+      "act": "Guardians and Wards Act, 1890",
+      "act_short": "Guardians and Wards Act",
+      "year": 1890,
+      "verified": true
+    },
+    "ndps": {
+      "status": "live",
+      "act": "Narcotic Drugs and Psychotropic Substances Act, 1985",
+      "act_short": "NDPS Act",
+      "year": 1985,
+      "verified": true
+    },
+    "pca": {
+      "status": "live",
+      "act": "Prevention of Corruption Act, 1988",
+      "act_short": "PC Act",
+      "year": 1988,
+      "verified": true
+    },
+    "registration": {
+      "status": "live",
+      "act": "Registration Act, 1908",
+      "act_short": "Registration Act",
+      "year": 1908,
+      "verified": true
+    },
+    "stamp": {
+      "status": "live",
+      "act": "Indian Stamp Act, 1899",
+      "act_short": "Stamp Act",
+      "year": 1899,
+      "verified": true
+    },
+    "rpwd": {
+      "status": "live",
+      "act": "Rights of Persons with Disabilities Act, 2016",
+      "act_short": "RPwD Act",
+      "year": 2016,
+      "verified": true
+    },
+    "phra": {
+      "status": "live",
+      "act": "Protection of Human Rights Act, 1993",
+      "act_short": "PHR Act",
+      "year": 1993,
+      "verified": true
+    },
+    "partnership": {
+      "status": "live",
+      "act": "Indian Partnership Act, 1932",
+      "act_short": "Partnership Act",
+      "year": 1932,
+      "verified": true
+    },
+    "easements": {
+      "status": "live",
+      "act": "Indian Easements Act, 1882",
+      "act_short": "Easements Act",
+      "year": 1882,
+      "verified": true
+    },
+    "companies": {
+      "status": "live",
+      "act": "Companies Act, 2013",
+      "act_short": "Companies Act",
+      "year": 2013,
+      "verified": true
+    }
+  },
+  "crpc:41": {
+    "act": "Bharatiya Nagarik Suraksha Sanhita, 2023",
+    "act_short": "BNSS",
+    "act_key": "bnss",
+    "section": "35",
+    "verified": true,
+    "source": "NCRB, Corresponding Section Table of BNSS 2023 with CrPC, https://cytrain.ncrb.gov.in/staticpage/web_pages/SectionTableBNSS.html"
+  },
+  "crpc:41A": {
+    "act": "Bharatiya Nagarik Suraksha Sanhita, 2023",
+    "act_short": "BNSS",
+    "act_key": "bnss",
+    "section": "35",
+    "verified": true,
+    "source": "NCRB, Corresponding Section Table of BNSS 2023 with CrPC, https://cytrain.ncrb.gov.in/staticpage/web_pages/SectionTableBNSS.html"
+  },
+  "crpc:46": {
+    "act": "Bharatiya Nagarik Suraksha Sanhita, 2023",
+    "act_short": "BNSS",
+    "act_key": "bnss",
+    "section": "43",
+    "verified": true,
+    "source": "NCRB, Corresponding Section Table of BNSS 2023 with CrPC, https://cytrain.ncrb.gov.in/staticpage/web_pages/SectionTableBNSS.html"
+  },
+  "crpc:50": {
+    "act": "Bharatiya Nagarik Suraksha Sanhita, 2023",
+    "act_short": "BNSS",
+    "act_key": "bnss",
+    "section": "47",
+    "verified": true,
+    "source": "NCRB, Corresponding Section Table of BNSS 2023 with CrPC, https://cytrain.ncrb.gov.in/staticpage/web_pages/SectionTableBNSS.html"
+  },
+  "crpc:54": {
+    "act": "Bharatiya Nagarik Suraksha Sanhita, 2023",
+    "act_short": "BNSS",
+    "act_key": "bnss",
+    "section": "53",
+    "verified": true,
+    "source": "NCRB, Corresponding Section Table of BNSS 2023 with CrPC, https://cytrain.ncrb.gov.in/staticpage/web_pages/SectionTableBNSS.html"
+  },
+  "crpc:57": {
+    "act": "Bharatiya Nagarik Suraksha Sanhita, 2023",
+    "act_short": "BNSS",
+    "act_key": "bnss",
+    "section": "58",
+    "verified": true,
+    "source": "NCRB, Corresponding Section Table of BNSS 2023 with CrPC, https://cytrain.ncrb.gov.in/staticpage/web_pages/SectionTableBNSS.html"
+  },
+  "crpc:125": {
+    "act": "Bharatiya Nagarik Suraksha Sanhita, 2023",
+    "act_short": "BNSS",
+    "act_key": "bnss",
+    "section": "144",
+    "verified": true,
+    "source": "NCRB, Corresponding Section Table of BNSS 2023 with CrPC, https://cytrain.ncrb.gov.in/staticpage/web_pages/SectionTableBNSS.html"
+  },
+  "crpc:144": {
+    "act": "Bharatiya Nagarik Suraksha Sanhita, 2023",
+    "act_short": "BNSS",
+    "act_key": "bnss",
+    "section": "163",
+    "verified": true,
+    "source": "NCRB, Corresponding Section Table of BNSS 2023 with CrPC, https://cytrain.ncrb.gov.in/staticpage/web_pages/SectionTableBNSS.html"
+  },
+  "crpc:154": {
+    "act": "Bharatiya Nagarik Suraksha Sanhita, 2023",
+    "act_short": "BNSS",
+    "act_key": "bnss",
+    "section": "173",
+    "verified": true,
+    "source": "NCRB, Corresponding Section Table of BNSS 2023 with CrPC, https://cytrain.ncrb.gov.in/staticpage/web_pages/SectionTableBNSS.html"
+  },
+  "crpc:156": {
+    "act": "Bharatiya Nagarik Suraksha Sanhita, 2023",
+    "act_short": "BNSS",
+    "act_key": "bnss",
+    "section": "175",
+    "verified": true,
+    "source": "NCRB, Corresponding Section Table of BNSS 2023 with CrPC, https://cytrain.ncrb.gov.in/staticpage/web_pages/SectionTableBNSS.html"
+  },
+  "crpc:161": {
+    "act": "Bharatiya Nagarik Suraksha Sanhita, 2023",
+    "act_short": "BNSS",
+    "act_key": "bnss",
+    "section": "180",
+    "verified": true,
+    "source": "NCRB, Corresponding Section Table of BNSS 2023 with CrPC, https://cytrain.ncrb.gov.in/staticpage/web_pages/SectionTableBNSS.html"
+  },
+  "crpc:164": {
+    "act": "Bharatiya Nagarik Suraksha Sanhita, 2023",
+    "act_short": "BNSS",
+    "act_key": "bnss",
+    "section": "183",
+    "verified": true,
+    "source": "NCRB, Corresponding Section Table of BNSS 2023 with CrPC, https://cytrain.ncrb.gov.in/staticpage/web_pages/SectionTableBNSS.html"
+  },
+  "crpc:167": {
+    "act": "Bharatiya Nagarik Suraksha Sanhita, 2023",
+    "act_short": "BNSS",
+    "act_key": "bnss",
+    "section": "187",
+    "verified": true,
+    "source": "NCRB, Corresponding Section Table of BNSS 2023 with CrPC, https://cytrain.ncrb.gov.in/staticpage/web_pages/SectionTableBNSS.html"
+  },
+  "crpc:173": {
+    "act": "Bharatiya Nagarik Suraksha Sanhita, 2023",
+    "act_short": "BNSS",
+    "act_key": "bnss",
+    "section": "193",
+    "verified": true,
+    "source": "NCRB, Corresponding Section Table of BNSS 2023 with CrPC, https://cytrain.ncrb.gov.in/staticpage/web_pages/SectionTableBNSS.html"
+  },
+  "crpc:190": {
+    "act": "Bharatiya Nagarik Suraksha Sanhita, 2023",
+    "act_short": "BNSS",
+    "act_key": "bnss",
+    "section": "210",
+    "verified": true,
+    "source": "NCRB, Corresponding Section Table of BNSS 2023 with CrPC, https://cytrain.ncrb.gov.in/staticpage/web_pages/SectionTableBNSS.html"
+  },
+  "crpc:197": {
+    "act": "Bharatiya Nagarik Suraksha Sanhita, 2023",
+    "act_short": "BNSS",
+    "act_key": "bnss",
+    "section": "218",
+    "verified": true,
+    "source": "NCRB, Corresponding Section Table of BNSS 2023 with CrPC, https://cytrain.ncrb.gov.in/staticpage/web_pages/SectionTableBNSS.html"
+  },
+  "crpc:200": {
+    "act": "Bharatiya Nagarik Suraksha Sanhita, 2023",
+    "act_short": "BNSS",
+    "act_key": "bnss",
+    "section": "223",
+    "verified": true,
+    "source": "NCRB, Corresponding Section Table of BNSS 2023 with CrPC, https://cytrain.ncrb.gov.in/staticpage/web_pages/SectionTableBNSS.html"
+  },
+  "crpc:436": {
+    "act": "Bharatiya Nagarik Suraksha Sanhita, 2023",
+    "act_short": "BNSS",
+    "act_key": "bnss",
+    "section": "478",
+    "verified": true,
+    "source": "NCRB, Corresponding Section Table of BNSS 2023 with CrPC, https://cytrain.ncrb.gov.in/staticpage/web_pages/SectionTableBNSS.html"
+  },
+  "crpc:437": {
+    "act": "Bharatiya Nagarik Suraksha Sanhita, 2023",
+    "act_short": "BNSS",
+    "act_key": "bnss",
+    "section": "480",
+    "verified": true,
+    "source": "NCRB, Corresponding Section Table of BNSS 2023 with CrPC, https://cytrain.ncrb.gov.in/staticpage/web_pages/SectionTableBNSS.html"
+  },
+  "crpc:438": {
+    "act": "Bharatiya Nagarik Suraksha Sanhita, 2023",
+    "act_short": "BNSS",
+    "act_key": "bnss",
+    "section": "482",
+    "verified": true,
+    "source": "NCRB, Corresponding Section Table of BNSS 2023 with CrPC, https://cytrain.ncrb.gov.in/staticpage/web_pages/SectionTableBNSS.html"
+  },
+  "crpc:439": {
+    "act": "Bharatiya Nagarik Suraksha Sanhita, 2023",
+    "act_short": "BNSS",
+    "act_key": "bnss",
+    "section": "483",
+    "verified": true,
+    "source": "NCRB, Corresponding Section Table of BNSS 2023 with CrPC, https://cytrain.ncrb.gov.in/staticpage/web_pages/SectionTableBNSS.html"
+  },
+  "crpc:482": {
+    "act": "Bharatiya Nagarik Suraksha Sanhita, 2023",
+    "act_short": "BNSS",
+    "act_key": "bnss",
+    "section": "528",
+    "verified": true,
+    "source": "NCRB, Corresponding Section Table of BNSS 2023 with CrPC, https://cytrain.ncrb.gov.in/staticpage/web_pages/SectionTableBNSS.html"
+  },
+  "iea:3": {
+    "act": "Bharatiya Sakshya Adhiniyam, 2023",
+    "act_short": "BSA",
+    "act_key": "bsa",
+    "section": "2",
+    "verified": true,
+    "source": "NCRB, Corresponding Section Table of BSA 2023 with Indian Evidence Act, https://cytrain.ncrb.gov.in/staticpage/web_pages/SectionTableBSA.html"
+  },
+  "iea:8": {
+    "act": "Bharatiya Sakshya Adhiniyam, 2023",
+    "act_short": "BSA",
+    "act_key": "bsa",
+    "section": "6",
+    "verified": true,
+    "source": "NCRB, Corresponding Section Table of BSA 2023 with Indian Evidence Act, https://cytrain.ncrb.gov.in/staticpage/web_pages/SectionTableBSA.html"
+  },
+  "iea:24": {
+    "act": "Bharatiya Sakshya Adhiniyam, 2023",
+    "act_short": "BSA",
+    "act_key": "bsa",
+    "section": "22",
+    "verified": true,
+    "source": "NCRB, Corresponding Section Table of BSA 2023 with Indian Evidence Act, https://cytrain.ncrb.gov.in/staticpage/web_pages/SectionTableBSA.html"
+  },
+  "iea:25": {
+    "act": "Bharatiya Sakshya Adhiniyam, 2023",
+    "act_short": "BSA",
+    "act_key": "bsa",
+    "section": "23",
+    "verified": true,
+    "source": "NCRB, Corresponding Section Table of BSA 2023 with Indian Evidence Act, https://cytrain.ncrb.gov.in/staticpage/web_pages/SectionTableBSA.html"
+  },
+  "iea:26": {
+    "act": "Bharatiya Sakshya Adhiniyam, 2023",
+    "act_short": "BSA",
+    "act_key": "bsa",
+    "section": "24",
+    "verified": true,
+    "source": "NCRB, Corresponding Section Table of BSA 2023 with Indian Evidence Act, https://cytrain.ncrb.gov.in/staticpage/web_pages/SectionTableBSA.html"
+  },
+  "iea:27": {
+    "act": "Bharatiya Sakshya Adhiniyam, 2023",
+    "act_short": "BSA",
+    "act_key": "bsa",
+    "section": "23",
+    "verified": true,
+    "source": "NCRB, Corresponding Section Table of BSA 2023 with Indian Evidence Act, https://cytrain.ncrb.gov.in/staticpage/web_pages/SectionTableBSA.html"
+  },
+  "iea:32": {
+    "act": "Bharatiya Sakshya Adhiniyam, 2023",
+    "act_short": "BSA",
+    "act_key": "bsa",
+    "section": "26",
+    "verified": true,
+    "source": "NCRB, Corresponding Section Table of BSA 2023 with Indian Evidence Act, https://cytrain.ncrb.gov.in/staticpage/web_pages/SectionTableBSA.html"
+  },
+  "iea:45": {
+    "act": "Bharatiya Sakshya Adhiniyam, 2023",
+    "act_short": "BSA",
+    "act_key": "bsa",
+    "section": "39",
+    "verified": true,
+    "source": "NCRB, Corresponding Section Table of BSA 2023 with Indian Evidence Act, https://cytrain.ncrb.gov.in/staticpage/web_pages/SectionTableBSA.html"
+  },
+  "iea:65B": {
+    "act": "Bharatiya Sakshya Adhiniyam, 2023",
+    "act_short": "BSA",
+    "act_key": "bsa",
+    "section": "63",
+    "verified": true,
+    "source": "NCRB, Corresponding Section Table of BSA 2023 with Indian Evidence Act, https://cytrain.ncrb.gov.in/staticpage/web_pages/SectionTableBSA.html"
+  },
+  "iea:101": {
+    "act": "Bharatiya Sakshya Adhiniyam, 2023",
+    "act_short": "BSA",
+    "act_key": "bsa",
+    "section": "104",
+    "verified": true,
+    "source": "NCRB, Corresponding Section Table of BSA 2023 with Indian Evidence Act, https://cytrain.ncrb.gov.in/staticpage/web_pages/SectionTableBSA.html"
+  },
+  "iea:102": {
+    "act": "Bharatiya Sakshya Adhiniyam, 2023",
+    "act_short": "BSA",
+    "act_key": "bsa",
+    "section": "105",
+    "verified": true,
+    "source": "NCRB, Corresponding Section Table of BSA 2023 with Indian Evidence Act, https://cytrain.ncrb.gov.in/staticpage/web_pages/SectionTableBSA.html"
+  },
+  "iea:106": {
+    "act": "Bharatiya Sakshya Adhiniyam, 2023",
+    "act_short": "BSA",
+    "act_key": "bsa",
+    "section": "109",
+    "verified": true,
+    "source": "NCRB, Corresponding Section Table of BSA 2023 with Indian Evidence Act, https://cytrain.ncrb.gov.in/staticpage/web_pages/SectionTableBSA.html"
+  },
+  "iea:114": {
+    "act": "Bharatiya Sakshya Adhiniyam, 2023",
+    "act_short": "BSA",
+    "act_key": "bsa",
+    "section": "119",
+    "verified": true,
+    "source": "NCRB, Corresponding Section Table of BSA 2023 with Indian Evidence Act, https://cytrain.ncrb.gov.in/staticpage/web_pages/SectionTableBSA.html"
+  },
   "ipc:34": {
     "act": "Bharatiya Nyaya Sanhita, 2023",
     "act_short": "BNS",

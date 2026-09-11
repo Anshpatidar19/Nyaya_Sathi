@@ -102,9 +102,13 @@ def dense_hits(query: str, limit: int, *, jurisdictions: Optional[List[str]] = N
     try:
         vec = embeddings.embed_query(query)
         index = vectorstore.ensure_index()
-        matches = vectorstore.query(
+        # Both statute namespaces: the hand-checked corpus and the extension
+        # corpus. One embedding, two ANN lookups - the ANN part is
+        # sub-millisecond, so this costs nothing measurable, and it means the
+        # extension can live in a namespace that is safe to delete.
+        matches = vectorstore.query_many(
             index, vec,
-            namespace=vectorstore.NS_STATUTE,
+            namespaces=vectorstore.statute_namespaces(),
             top_k=limit * 3,   # room to dedupe multi-chunk sections
             filter=vectorstore.build_filter(
                 current_only=current_only, jurisdictions=jurisdictions),
