@@ -349,9 +349,14 @@ async def ask(
 ):
     question = payload.question.strip()
 
-    # A document attached alongside carries the context, so a one-word nudge
-    # is legitimate there and only the gibberish tests apply.
-    _gate_request(question, allow_short=bool(payload.document_id))
+    # A clean "hi" / "thanks" / "who are you" is answered by the fast path
+    # in reasoning.answer_question below and must skip the request gate -
+    # otherwise a 5-character greeting never gets that far, since the gate's
+    # length floor rejects it as "too short" first.
+    if reasoning.greeting_reply(question) is None:
+        # A document attached alongside carries the context, so a one-word
+        # nudge is legitimate there and only the gibberish tests apply.
+        _gate_request(question, allow_short=bool(payload.document_id))
 
     document = None
     if payload.document_id:
@@ -418,7 +423,11 @@ async def ask_stream(
     """
     question = payload.question.strip()
 
-    _gate_request(question, allow_short=bool(payload.document_id))
+    # See /ask - a clean greeting skips the gate so the fast path in
+    # reasoning.answer_question_stream can answer it instead of it being
+    # rejected as "too short".
+    if reasoning.greeting_reply(question) is None:
+        _gate_request(question, allow_short=bool(payload.document_id))
 
     document = None
     if payload.document_id:
@@ -1094,10 +1103,21 @@ async def review_document(
     """
     text = (payload.document_text or "").strip()
     filename = None
+    context = payload.context
 
-    if payload.document_id and not text:
-        doc, text = await _load_document(db, payload.document_id, current_user)
+    # An uploaded file is always the document to review. Text typed
+    # alongside it - "check the legitimacy of this" - is an instruction
+    # about the file, not the document itself, so it must not replace the
+    # file's content. Previously this only loaded the file when the text
+    # box was empty, so any accompanying caption silently discarded the
+    # attachment and got reviewed as if IT were the document - a dozen
+    # characters, always short-circuited as unreadable.
+    if payload.document_id:
+        doc, doc_text = await _load_document(db, payload.document_id, current_user)
         filename = doc.filename
+        if text:
+            context = f"{context}\n\n{text}".strip() if context else text
+        text = doc_text
 
     if not text:
         raise HTTPException(
@@ -1116,7 +1136,7 @@ async def review_document(
     await _gate_document(text, filename or "")
 
     try:
-        result = await drafting.review(text, payload.doc_type, payload.context)
+        result = await drafting.review(text, payload.doc_type, context)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
     except Exception as exc:

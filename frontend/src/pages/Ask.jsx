@@ -560,12 +560,15 @@ export default function Ask() {
         refreshHistory({ fresh: true });   // the new thread must appear now
       } else if (mode === 'review') {
         const data = await reviewDocument(token, {
-          // A pasted clause and an uploaded file are both valid; the backend
-          // prefers the text when both arrive.
-          document_text: prompt.trim() || null,
+          // A pasted clause and an uploaded file are both valid ways to
+          // supply the document. When a file is attached it IS the
+          // document to review, so any typed note ("check the legitimacy
+          // of this") is sent as context/instruction instead - it must not
+          // overwrite the file's content.
+          document_text: sentFile ? null : prompt.trim() || null,
           document_id: sentFile?.id,
           doc_type: docType || null,
-          context: null,
+          context: sentFile ? prompt.trim() || null : null,
           conversation_id: conversationId,
         });
         if (data.conversation_id) {
