@@ -12,3 +12,6 @@ backend/.venv/
 backend/venv/
 backend/.venv/
 *.bak
+
+# scraper page cache - regenerable, not source
+backend/.cache/
