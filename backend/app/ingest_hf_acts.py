@@ -638,15 +638,26 @@ def ingest_vectors(act_keys: List[str], *, namespace: str, force: bool = False,
     statutes._index.cache_clear()          # pick up the files just written
     docs = [d for d in statutes._index()["docs"] if d["act_key"] in set(act_keys)]
     if not docs:
-        print("  no documents for those act keys - did --write-local run?")
+        have = sorted({d["act_key"] for d in statutes._index()["docs"]})
+        print(f"  no documents for act key(s): {', '.join(act_keys) or '(none)'}")
+        print(f"  corpus currently holds: {', '.join(have)}")
+        print("  If the act was scraped rather than taken from the dataset, "
+              "pass it with --acts.")
         return {"chunks": 0, "skipped": 0, "upserted": 0}
 
     chunks = []
     for d in docs:
         d = dict(d)
         d["corpus_batch"] = CORPUS_BATCH
-        d["source"] = HF_DATASET
-        d["source_url"] = HF_URL
+        # Only claim the dataset as the source when the row did not already
+        # carry one. The scraped acts record their own provenance (India Code
+        # as the citation), and overwriting it here would attribute BNSS text
+        # to a dataset that does not contain it.
+        d.setdefault("source", HF_DATASET)
+        if not d.get("source"):
+            d["source"] = HF_DATASET
+        if not d.get("source_url"):
+            d["source_url"] = HF_URL
         chunks.extend(chunk_statute(d))
     print(f"  {len(docs):,} sections -> {len(chunks):,} chunks")
 
@@ -831,6 +842,24 @@ def main() -> None:
 
     if args.vectors:
         keys = sorted(rep.selected)
+        # An act can be in the local corpus without being in the dataset.
+        # BNSS and BSA are exactly that case: the dataset predates them, so
+        # they were scraped separately into data/bnss.json and data/bsa.json.
+        # Keying the vector step off rep.selected alone meant
+        # `--acts bnss bsa` embedded nothing at all - the dataset filter
+        # found no rows, so the key list was empty and ingest_vectors had
+        # nothing to chunk, even though _index() had all 701 sections
+        # loaded. An explicit --acts is a direct instruction about what to
+        # embed, so it is honoured whether or not the dataset contributed.
+        if args.acts:
+            on_disk = {d["act_key"] for d in statutes._index()["docs"]}
+            asked = [a for a in args.acts
+                     if a in on_disk and a not in set(blocked)]
+            local_only = [a for a in asked if a not in rep.selected]
+            if local_only:
+                print(f"  including {', '.join(local_only)} from the local "
+                      f"corpus (not in the dataset)")
+            keys = sorted(set(keys) | set(asked))
         print(f"Ingesting vectors into namespace '{namespace}':")
         res = ingest_vectors(keys, namespace=namespace, force=args.force,
                              dry=args.dry_run)
