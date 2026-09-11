@@ -59,6 +59,15 @@ _SENTENCE_BOUNDARY = re.compile(r"(?<=[.;])\s+(?=[A-Z(])")
 # beyond this is not dropped - it moves into the next chunk.
 EMBED_HARD_CEILING = 6000
 
+# Leading sub-clause / clause marker of a split part, e.g. "(2)" or "(b)".
+# Recorded as metadata so a retrieved part can say WHICH subsection it is,
+# rather than only "part 2 of 3". Preserving Act -> Chapter -> Section ->
+# Subsection -> Clause means the subsection has to survive into metadata, not
+# just sit inside the text.
+_LEAD_SUBSECTION = re.compile(r"^\s*\((\d+)\)")
+_LEAD_CLAUSE = re.compile(r"^\s*\(([a-z]{1,3}|[ivxl]{1,5})\)", re.IGNORECASE)
+
+
 # A unit that must never stand alone - it modifies whatever came before it.
 _DEPENDENT_UNIT = re.compile(
     r"^\s*(?:Provided\b|Explanation\b|Illustration[s]?\b|Exception\b)", re.IGNORECASE
@@ -201,17 +210,40 @@ def chunk_statute(doc: Dict[str, Any], *, version: int = 1) -> List[Chunk]:
         units = _split_preserving_units(body)
         groups = _pack(units, MAX_STATUTE_CHARS, EMBED_HARD_CEILING)
 
+    # The full structural breadcrumb, stored as `context` on every chunk.
+    # This is what a citation card renders and what tells a reader that a
+    # fragment beginning "(2) Where the child is..." belongs to POCSO s.4
+    # inside its chapter, not to whatever section preceded it in the prompt.
+    context = " > ".join(
+        b for b in (
+            doc.get("act") or act_key,
+            chapter or None,
+            f"{unit} {section}" + (f" - {title}" if title else ""),
+        ) if b
+    )
+
     total = len(groups)
     out: List[Chunk] = []
     for i, group in enumerate(groups):
         text = "\n".join(group).strip()
         part = f"part {i + 1} of {total}" if total > 1 else None
+
+        sub = _LEAD_SUBSECTION.match(text)
+        cls = None if sub else _LEAD_CLAUSE.match(text)
+        subsection = sub.group(1) if sub else ""
+        clause = cls.group(1) if cls else ""
+
+        md = _statute_metadata(doc, version=version, index=i, count=total)
+        md["context"] = context + (f" > ({subsection})" if subsection else "")
+        md["subsection"] = subsection
+        md["clause"] = clause
+
         chunk = Chunk(
             chunk_id=f"{parent_id}:v{version}:{i}",
             parent_id=parent_id,
             text=text,
             embed_text=f"{header(part)}\n\n{text}",
-            metadata=_statute_metadata(doc, version=version, index=i, count=total),
+            metadata=md,
         )
         chunk.metadata["content_hash"] = chunk.content_hash()
         out.append(chunk)
@@ -244,6 +276,23 @@ def _statute_metadata(doc: Dict[str, Any], *, version: int, index: int, count: i
         "chunk_index": index,
         "chunk_count": count,
         "text": doc.get("text") or "",
+        # --- provenance and act-level status ------------------------------
+        # `legal_status` above is SECTION level (active/repealed). `act_status`
+        # is ACT level (live/repealed/amending/successor) - a different axis,
+        # so it gets its own field rather than overloading one.
+        #
+        # No field here duplicates another under a second name: the requested
+        # `act_name` / `act_short_name` / `status` / `document_type` /
+        # `text_hash` are this schema's `act` / `act_short` / `legal_status` /
+        # `source_type` / `content_hash`. Adding synonyms would double the
+        # metadata payload and give two things to keep in sync.
+        "act_status": doc.get("act_status") or ("live" if current else "repealed"),
+        "year": int(doc["year"]) if str(doc.get("year") or "").isdigit() else 0,
+        "source": doc.get("source") or "curated",
+        "source_url": doc.get("source_url") or "",
+        # Set by the ingestion script. The rollback handle - see
+        # vectorstore.delete_batch.
+        "corpus_batch": doc.get("corpus_batch") or "",
     }
 
 

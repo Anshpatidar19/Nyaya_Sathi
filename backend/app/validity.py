@@ -32,6 +32,25 @@ GOOD_LAW = "good_law"
 AMENDED = "amended"
 REPEALED = "repealed"
 
+# Act-level status values. These are a different axis from the section-level
+# ones above and the distinction matters: a section can be amended inside an
+# act that is perfectly live, and a section can be untouched inside an act
+# that has been repealed wholesale.
+#
+#   live       in force, consolidated text
+#   repealed   no longer in force; `successor_act_key` says what replaced it
+#   amending   an amendment act - modifies another act, never stands alone.
+#              Nothing with this status should ever be in the corpus; the
+#              value exists so the ingestion filter can name what it dropped.
+#   successor  in force, and it is what replaced a repealed act. Practically
+#              identical to `live`; the distinction is what lets us answer
+#              "CrPC 154 is now BNSS 173" instead of just "CrPC is repealed".
+ACT_LIVE = "live"
+ACT_REPEALED = "repealed"
+ACT_AMENDING = "amending"
+ACT_SUCCESSOR = "successor"
+ACT_STATUSES = (ACT_LIVE, ACT_REPEALED, ACT_AMENDING, ACT_SUCCESSOR)
+
 
 # ---------------------------------------------------------------------------
 # Repeal / supersession
@@ -54,6 +73,75 @@ def _repeal_map() -> Dict[str, Dict[str, Any]]:
         logger.warning("Could not read %s: %s", REPEAL_MAP, exc)
         return {}
     return {k: v for k, v in raw.items() if not k.startswith("_")}
+
+
+@lru_cache(maxsize=1)
+def _act_map() -> Dict[str, Dict[str, Any]]:
+    """Act-level status, from the `_acts` block of repeal_map.json.
+
+    Kept in the same file as the section map on purpose. Act status and
+    section successors are one dataset - splitting them across two files is
+    how they drift apart, and a drifted repeal map is the failure mode this
+    whole layer exists to prevent.
+    """
+    if not REPEAL_MAP.exists():
+        return {}
+    try:
+        raw = json.loads(REPEAL_MAP.read_text(encoding="utf-8"))
+    except Exception as exc:
+        logger.warning("Could not read %s: %s", REPEAL_MAP, exc)
+        return {}
+    acts = raw.get("_acts") or {}
+    return acts if isinstance(acts, dict) else {}
+
+
+def act_status(act_key: str) -> Dict[str, Any]:
+    """Act-level status block for one act key.
+
+    Falls back to `live` rather than raising, because an act present in the
+    corpus but absent from the map is a gap in the map, not a reason to fail
+    a user's query. The `known` flag makes the gap visible to callers and to
+    `python -m app.validity --audit`.
+    """
+    rec = _act_map().get(act_key)
+    if not rec:
+        return {"act_key": act_key, "status": ACT_LIVE, "known": False,
+                "verified": False}
+    out = dict(rec)
+    out["act_key"] = act_key
+    out["known"] = True
+    out.setdefault("status", ACT_LIVE)
+    out.setdefault("verified", False)
+    return out
+
+
+def successor_act(act_key: str) -> Optional[Dict[str, Any]]:
+    """The act that replaced this one, if any. `crpc` -> the BNSS block."""
+    rec = act_status(act_key)
+    nxt = rec.get("successor_act_key")
+    return act_status(nxt) if nxt else None
+
+
+def is_amending(act_key: str) -> bool:
+    """True for an amendment act. The ingestion filter refuses these."""
+    return act_status(act_key).get("status") == ACT_AMENDING
+
+
+def audit(act_keys) -> Dict[str, Any]:
+    """Which acts in the corpus have no entry in the act map.
+
+    Run after adding acts. An act missing here is silently treated as live,
+    which is exactly the kind of quiet wrong answer this system is meant to
+    avoid.
+    """
+    missing = [k for k in act_keys if not act_status(k)["known"]]
+    unresolved = [
+        k for k in act_keys
+        if act_status(k).get("status") == ACT_REPEALED
+        and not act_status(k).get("successor_act_key")
+    ]
+    return {"total": len(list(act_keys)), "missing_from_act_map": missing,
+            "repealed_without_successor": unresolved}
 
 
 # A successor can name a subsection - IPC 34 became BNS 3(5). The index only
@@ -81,14 +169,28 @@ def status_for(doc: Dict[str, Any]) -> Dict[str, Any]:
     """
     act_key = doc.get("act_key", "")
     section = str(doc.get("section", ""))
+    act = act_status(act_key)
 
     if doc.get("current", True):
+        # A live act and a successor act are both "in force". The label
+        # differs only so the UI can say what a successor act replaced,
+        # which is the thing a user asking about old law actually needs.
+        note = ""
+        if act.get("status") == ACT_SUCCESSOR and act.get("supersedes_act_key"):
+            prior = act_status(act["supersedes_act_key"])
+            if prior.get("known"):
+                note = (
+                    f"In force since 1 July 2024. This act replaced the "
+                    f"{prior.get('act', prior['act_key'])}."
+                )
         return {
             "status": GOOD_LAW,
             "label": "In force",
-            "note": "",
+            "note": note,
             "successor": None,
             "verified": True,
+            "act_status": act.get("status", ACT_LIVE),
+            "act_status_known": act.get("known", False),
         }
 
     succ = successor(act_key, section)
@@ -111,7 +213,21 @@ def status_for(doc: Dict[str, Any]) -> Dict[str, Any]:
             ),
             "successor": succ,
             "verified": verified,
+            "act_status": act.get("status", ACT_REPEALED),
+            "act_status_known": act.get("known", False),
         }
+
+    # No section-level mapping. Fall back to the act-level one, which is a
+    # weaker but still useful answer: we cannot say which section replaced
+    # this one, but we can say which act did.
+    succ_act = successor_act(act_key)
+    if succ_act and succ_act.get("known"):
+        note = (
+            f"{note} The act that replaced it is the "
+            f"{succ_act.get('act', succ_act['act_key'])}, but we do not have a "
+            f"section-level mapping for this provision - find the "
+            f"corresponding section there before relying on it."
+        )
 
     return {
         "status": REPEALED,
@@ -119,6 +235,8 @@ def status_for(doc: Dict[str, Any]) -> Dict[str, Any]:
         "note": note,
         "successor": None,
         "verified": True,
+        "act_status": act.get("status", ACT_REPEALED),
+        "act_status_known": act.get("known", False),
     }
 
 
@@ -257,3 +375,48 @@ def assess(
         "cited": n_cited,
         "repealed": len(repealed),
     }
+
+# ---------------------------------------------------------------------------
+# CLI
+# ---------------------------------------------------------------------------
+
+def _cli() -> None:
+    import argparse
+
+    ap = argparse.ArgumentParser(description="Validity layer checks.")
+    ap.add_argument("--audit", action="store_true",
+                    help="report corpus acts missing from the act-level map")
+    args = ap.parse_args()
+
+    if not args.audit:
+        ap.print_help()
+        return
+
+    from . import statutes
+
+    keys = sorted({d["act_key"] for d in statutes._index()["docs"]})
+    rep = audit(keys)
+    print(f"{rep['total']} acts in the corpus\n")
+
+    by_status: Dict[str, List[str]] = {}
+    for k in keys:
+        by_status.setdefault(act_status(k).get("status", "?"), []).append(k)
+    for st in sorted(by_status):
+        print(f"  {st:<10} {len(by_status[st]):>3}  {', '.join(sorted(by_status[st]))}")
+
+    print()
+    if rep["missing_from_act_map"]:
+        print("  MISSING from repeal_map._acts (treated as live, which may be wrong):")
+        for k in rep["missing_from_act_map"]:
+            print(f"    - {k}")
+    else:
+        print("  Every corpus act has an act-level status entry.")
+
+    if rep["repealed_without_successor"]:
+        print("\n  Repealed with no successor_act_key:")
+        for k in rep["repealed_without_successor"]:
+            print(f"    - {k}")
+
+
+if __name__ == "__main__":
+    _cli()

@@ -9,6 +9,13 @@ not a caller's choice.
 
 Model: text-embedding-004, 768 dimensions. Same API key as the rest of the
 Gemini work, so nothing new to configure or rotate.
+
+The key is sent as the `x-goog-api-key` HEADER, never as a `?key=` query
+parameter. That is not a style preference. httpx logs the full request URL at
+INFO level, so a key in the query string is printed on every single embedding
+call - and an ingestion run prints it dozens of times, into a terminal that
+routinely gets pasted into a chat, an issue, or a screenshot. A header is not
+logged. Gemini accepts both, so there is no reason to use the one that leaks.
 """
 
 from __future__ import annotations
@@ -16,6 +23,7 @@ from __future__ import annotations
 import logging
 import math
 import os
+import re
 import time
 from typing import Iterable, List, Optional, Sequence
 
@@ -90,14 +98,26 @@ def _retry_after(response) -> Optional[float]:
     return None
 
 
+def _redact(text: str) -> str:
+    """Strip anything key-shaped out of an error string before it is raised.
+
+    Google echoes the request URL back inside some error bodies, so even with
+    header auth a 400 can carry a key into a traceback.
+    """
+    text = re.sub(r"(?i)(key=)[A-Za-z0-9_\-.]{8,}", r"\1<redacted>", text)
+    return re.sub(r"\bAQ\.[A-Za-z0-9_\-]{8,}", "<redacted>", text)
+
+
 def _post(url: str, payload: dict) -> dict:
     """POST with backoff. 429 and 5xx are retried; 4xx are not, because a bad
     request will fail identically every time and retrying just hides it."""
     last: Optional[Exception] = None
+    headers = {"x-goog-api-key": _api_key(),
+               "Content-Type": "application/json"}
     for attempt in range(_MAX_RETRIES):
         try:
             with httpx.Client(timeout=_TIMEOUT) as client:
-                r = client.post(url, json=payload)
+                r = client.post(url, json=payload, headers=headers)
             if r.status_code == 200:
                 return r.json()
             if r.status_code == 429 or r.status_code >= 500:
@@ -107,9 +127,11 @@ def _post(url: str, payload: dict) -> dict:
                 wait = _retry_after(r) or min(2 ** attempt, 64)
                 logger.warning("Embedding API %s, retrying in %ss", r.status_code, wait)
                 time.sleep(wait)
-                last = EmbeddingError(f"HTTP {r.status_code}: {r.text[:200]}")
+                last = EmbeddingError(
+                    f"HTTP {r.status_code}: {_redact(r.text[:200])}")
                 continue
-            raise EmbeddingError(f"HTTP {r.status_code}: {r.text[:300]}")
+            raise EmbeddingError(
+                f"HTTP {r.status_code}: {_redact(r.text[:300])}")
         except httpx.RequestError as exc:
             wait = 2 ** attempt
             logger.warning("Embedding request failed (%s), retrying in %ss", exc, wait)
@@ -130,7 +152,8 @@ def _normalize(values: List[float]) -> List[float]:
 def _embed(texts: Sequence[str], task_type: str) -> List[List[float]]:
     if not texts:
         return []
-    url = f"{_ENDPOINT}:batchEmbedContents?key={_api_key()}"
+    # No `?key=` - see the module docstring. The key travels in a header.
+    url = f"{_ENDPOINT}:batchEmbedContents"
     payload = {
         "requests": [
             {

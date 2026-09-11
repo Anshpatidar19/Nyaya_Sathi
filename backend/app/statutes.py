@@ -10,13 +10,20 @@ Data lives in backend/data/*.json. Fetch it with:
     python -m app.ingest_statutes     # IPC, CrPC, NI Act, etc. (optional)
 
 Scoring is BM25 over section title + body. Pure Python, no extra deps -
-358 sections is small enough that a linear scan is sub-millisecond.
+a few thousand sections is small enough that a linear scan is sub-millisecond.
+
+The hand-checked acts are registered in ACTS below. Acts sourced from the
+`mratanusarkar/Indian-Laws` dataset live in statutes_ext.py and are merged in
+at import time - see the merge_into() call further down. That separation is
+deliberate: this file is the retrieval engine, that file is data with
+provenance attached.
 """
 
 import json
 import logging
 import math
 import re
+import sys as _sys
 from collections import Counter
 from functools import lru_cache
 from pathlib import Path
@@ -244,6 +251,27 @@ COMPANIONS: Dict[str, List[str]] = {
     "bns:63": ["64"],
     "bns:64": ["63"],
     "bns:303": ["305"],
+    # POCSO grades its offences in pairs: the offence, then the aggravated
+    # form. Retrieving one without the other gives half the punishment range.
+    "pocso:3": ["4"],
+    "pocso:4": ["3"],
+    "pocso:5": ["6"],
+    "pocso:6": ["5"],
+    "pocso:7": ["8"],
+    "pocso:9": ["10"],
+    # DV Act: "domestic violence" is defined in 3, but the reliefs that make
+    # the definition useful are in 18-22.
+    "pwdva:3": ["18", "19"],
+    "pwdva:18": ["19", "20"],
+    "pwdva:19": ["18"],
+    # Dowry: the definition and the demand offence are separate sections.
+    "dowry:2": ["3", "4"],
+    "dowry:4": ["2"],
+    # HSA: Class I heirs are listed in the Schedule, referenced from 8/9.
+    "hsa:8": ["9", "10"],
+    "hsa:6": ["8"],
+    # BNSS: FIR provision and the refusal-to-register remedy.
+    "bnss:173": ["175"],
 }
 
 # Statutes outside the ingested bare acts that a user should know about for
@@ -358,6 +386,9 @@ def _tokenize(text: str) -> List[str]:
 
 def _normalize(row: Dict[str, Any], act_key: str) -> Optional[Dict[str, Any]]:
     meta = ACTS[act_key]
+    # .get() throughout rather than [], because extension acts are declared in
+    # statutes_ext.py and a missing optional key there should degrade to a
+    # sensible default rather than crash the whole index build.
     number = row.get("Section", row.get("section", row.get("section_number")))
     body = (row.get("section_desc") or row.get("Legal Definition") or row.get("definition") or "").strip()
     if number is None or not body:
@@ -367,7 +398,7 @@ def _normalize(row: Dict[str, Any], act_key: str) -> Optional[Dict[str, Any]]:
     section = str(number).strip()
 
     url = None
-    tpl = meta["url_template"]
+    tpl = meta.get("url_template")
     if callable(tpl):
         url = tpl(section)
     elif tpl:
@@ -377,10 +408,23 @@ def _normalize(row: Dict[str, Any], act_key: str) -> Optional[Dict[str, Any]]:
         "act": meta["name"],
         "act_short": meta["short"],
         "act_key": act_key,
-        "current": meta["current"],
-        "superseded_by": meta["superseded_by"],
-        "priority": meta["priority"],
+        "current": meta.get("current", True),
+        "superseded_by": meta.get("superseded_by"),
+        "priority": meta.get("priority", 1),
         "unit": meta.get("unit", "Section"),
+        # Act-level provenance and status. Carried onto every chunk's
+        # metadata so a citation can say where the text came from and whether
+        # the act as a whole is live, repealed, amending or a successor.
+        "year": meta.get("year"),
+        "act_status": meta.get("status", "live" if meta.get("current", True)
+                               else "repealed"),
+        # Row-level provenance wins over act-level: ingest_hf_acts writes
+        # `source` / `source_url` onto every row it produces, so a section
+        # that came from the dataset says so even when the act registry
+        # entry does not.
+        "source": row.get("source") or meta.get("source") or "curated",
+        "source_url": row.get("source_url") or meta.get("source_url", ""),
+        "text_hash": row.get("text_hash") or "",
         "section": section,
         "chapter": row.get("chapter_title") or "",
         "title": title,
@@ -444,11 +488,31 @@ def get(act_key: str, section: str) -> Optional[Dict[str, Any]]:
 # BM25 can't answer "tell me about the BNS" - every token is a stopword or
 # the act name itself. Handle those explicitly.
 
+# Act names that trigger an act-level overview instead of a section search.
+# Ordered longest-first inside each group so the specific name wins.
+_OVERVIEW_NAMES = (
+    r"bharatiya nagarik suraksha sanhita|nagarik suraksha sanhita|"
+    r"bharatiya sakshya adhiniyam|sakshya adhiniyam|"
+    r"bharatiya nyaya sanhita|nyaya sanhita|"
+    r"protection of children from sexual offences act|"
+    r"protection of children from sexual offences|"
+    r"protection of women from domestic violence act|"
+    r"scheduled castes and scheduled tribes \(?prevention of atrocities\)? act|"
+    r"prevention of atrocities act|atrocities act|"
+    r"maintenance and welfare of parents and senior citizens act|"
+    r"sexual harassment of women at workplace act|"
+    r"juvenile justice act|senior citizens act|"
+    r"dowry prohibition act|hindu succession act|indian succession act|"
+    r"domestic violence act|succession act|"
+    r"indian penal code|constitution of india|indian constitution|"
+    r"bnss|bsa|bns|ipc|crpc|coi|pocso|posh|sc/st act|sc st act|dv act|"
+    r"nagarik suraksha|constitution"
+)
+
 _ACT_OVERVIEW_RE = re.compile(
-    r"\b(what|tell|explain|about|overview|meaning|introduce|describe)\b.{0,40}?"
-    r"\b(bns|bharatiya nyaya sanhita|nyaya sanhita|ipc|indian penal code|"
-    r"crpc|bnss|nagarik suraksha|coi|constitution of india|indian constitution|"
-    r"constitution)\b",
+    r"\b(what|tell|explain|about|overview|meaning|introduce|describe|"
+    r"say|says|cover|covers)\b.{0,60}?"
+    rf"(?<![a-z])({_OVERVIEW_NAMES})(?![a-z])",
     re.IGNORECASE | re.DOTALL,
 )
 
@@ -567,9 +631,50 @@ _ACT_ALIASES = {
     "arbitration and conciliation act": "arbitration",
     "arbitration act": "arbitration",
     "a&c act": "arbitration",
-    "bnss": "crpc",
-    "nagarik suraksha": "crpc",
+    # NOTE: "bnss" and "bsa" previously pointed at "crpc" and "iea". That was
+    # wrong and actively harmful - "BNSS 173" returned a repealed CrPC section
+    # with a repeal badge attached. statutes_ext.EXT_ALIASES overrides both
+    # below, now that the real BNSS and BSA text is in the corpus.
 }
+
+
+# --- extension corpus -----------------------------------------------------
+# Merged here, after ACTS / _CONCEPTS / _ACT_ALIASES / _OVERVIEWS exist and
+# BEFORE _ACT_TOKENS, _ACT_NAMES and _CITE_RE are built from them. Moving this
+# call below the regexes would leave every new act uncitable by number.
+try:
+    from . import statutes_ext
+
+    _EXT_MERGED = statutes_ext.merge_into(_sys.modules[__name__])
+    logger.info(
+        "statutes_ext merged: +%d acts, +%d concepts, %d aliases set, +%d overviews",
+        _EXT_MERGED["acts"], _EXT_MERGED["concepts"],
+        _EXT_MERGED["aliases"], _EXT_MERGED["overviews"],
+    )
+except Exception as _exc:  # pragma: no cover
+    # The extension is additive. If it fails to import, the original corpus
+    # must still work exactly as before rather than taking the app down.
+    statutes_ext = None
+    _EXT_MERGED = {"acts": 0, "concepts": 0, "aliases": 0, "overviews": 0}
+    logger.warning("statutes_ext not merged (%s); running base corpus only", _exc)
+
+
+# _ACT_OVERVIEW_RE was compiled above, before statutes_ext existed. Recompile
+# it now that the extension's colloquial act names are available. Longest-first
+# so a specific name wins over a substring of it ("protection of women from
+# domestic violence" before "domestic violence").
+_EXT_OV = list(getattr(statutes_ext, "EXT_OVERVIEW_NAMES", [])) if statutes_ext else []
+if _EXT_OV:
+    _OVERVIEW_NAMES = "|".join(
+        re.escape(n).replace(r"\ ", r"\s+")
+        for n in sorted(dict.fromkeys(_EXT_OV), key=len, reverse=True)
+    ) + "|" + _OVERVIEW_NAMES
+    _ACT_OVERVIEW_RE = re.compile(
+        r"\b(what|tell|explain|about|overview|meaning|introduce|describe|"
+        r"say|says|cover|covers)\b.{0,60}?"
+        rf"(?<![a-z])({_OVERVIEW_NAMES})(?![a-z])",
+        re.IGNORECASE | re.DOTALL,
+    )
 
 
 def act_overview(query: str) -> Optional[Dict[str, str]]:
@@ -578,12 +683,16 @@ def act_overview(query: str) -> Optional[Dict[str, str]]:
     Defers to section lookup when the query names a number - "what is BNS 85"
     is a section question, not a request for an overview of the whole code.
     """
-    if re.search(r"\d", query):
+    # A bare year is not a section number. "What is the POCSO Act, 2012"
+    # should still get the overview, so only a digit that reads like a section
+    # reference disqualifies - not a four-digit year attached to an act name.
+    stripped = re.sub(r"\b(?:1[6-9]|20)\d\d\b", " ", query)
+    if re.search(r"\d", stripped):
         return None
     m = _ACT_OVERVIEW_RE.search(query)
     if not m:
         return None
-    raw = m.group(2).lower()
+    raw = re.sub(r"\s+", " ", m.group(2).lower()).strip()
     key = _ACT_ALIASES.get(raw, raw)
     return _OVERVIEWS.get(key)
 
@@ -591,8 +700,15 @@ def act_overview(query: str) -> Optional[Dict[str, str]]:
 # --- direct citation lookup, e.g. "BNS 85", "section 318 of BNS" ----------
 
 # Short act tokens that can appear on either side of the number.
-_ACT_TOKENS = (
-    r"bns|bnss|bsa|ipc|crpc|cpc|iea|nia|hma|mva|coi|cpa|rti|tpa|ita"
+_BASE_ACT_TOKENS = [
+    "bns", "bnss", "bsa", "ipc", "crpc", "cpc", "iea", "nia", "hma", "mva",
+    "coi", "cpa", "rti", "tpa", "ita",
+]
+_EXT_TOKENS = list(getattr(statutes_ext, "EXT_ACT_TOKENS", [])) if statutes_ext else []
+# Longest-first so "bnss" is not eaten by "bns", and dedup so a token declared
+# in both lists does not produce a duplicate alternative.
+_ACT_TOKENS = "|".join(
+    sorted(dict.fromkeys(_BASE_ACT_TOKENS + _EXT_TOKENS), key=len, reverse=True)
 )
 
 # Longer act names, only ever written after the number ("section 138 of the
@@ -618,10 +734,29 @@ _ACT_NAMES = (
     r"hindu marriage act|motor vehicles act"
 )
 
+# Extension act names, appended as further alternatives. Sorted longest-first
+# for the same reason as above: "indian succession act" must win over
+# "succession act", and "prevention of atrocities act" over "atrocities act".
+_EXT_NAMES = list(getattr(statutes_ext, "EXT_ACT_NAMES", [])) if statutes_ext else []
+if _EXT_NAMES:
+    _ACT_NAMES = _ACT_NAMES + "|" + "|".join(
+        re.escape(n).replace(r"\ ", r"\s+")
+        for n in sorted(dict.fromkeys(_EXT_NAMES), key=len, reverse=True)
+    )
+
 _CITE_RE = re.compile(
     rf"(?:(?P<act1>{_ACT_TOKENS})\s*)?"
     r"(?P<unit>article|art\.?|section|sec\.?|s\.?|u/s)?\s*"
-    r"(?P<num>\d{1,3}[a-z]{0,2})"
+    # Lookbehind and lookahead both reject a digit run of 4+: without them,
+    # \d{1,3} happily reads the first three digits out of ANY longer number -
+    # "Consumer Protection Act, 2019" matched "201" as a bare section number,
+    # with no act attached, so lookup_section() searched every ingested act
+    # for a section "201" and returned whatever it found. Any query
+    # mentioning a year (nearly every act name in casual writing: "Act,
+    # 2019", "Act 1988") tripped this. Now a 4-digit run matches nowhere in
+    # it at all, which is what a year actually deserves - a real section
+    # citation is always 1-3 digits bounded by non-digits either way.
+    r"(?<!\d)(?P<num>\d{1,3}[a-z]{0,2})(?!\d)"
     rf"(?:\s*(?:of\s+(?:the\s+)?)?(?P<act2>{_ACT_TOKENS}|{_ACT_NAMES}))?",
     re.IGNORECASE,
 )

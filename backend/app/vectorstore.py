@@ -18,6 +18,14 @@ current law, so an amended-away provision can never be presented as live.
 in different namespaces because they are refreshed on completely different
 schedules. Jurisdiction is a metadata filter, not a namespace, because a
 single query often needs central law and state law together.
+
+*A corpus you can throw away.* Acts ingested from a third-party dataset go
+into their own namespace (NS_STATUTE_EXT) rather than mixing into the
+hand-checked one. Deleting that namespace deletes exactly those vectors and
+nothing else, which is what makes trying an ingest a reversible decision. Note
+that a git branch does NOT do this - Pinecone is external state and survives
+`git branch -D`. Rollback is `delete_namespace()` or `--rollback`, never a
+branch delete.
 """
 
 from __future__ import annotations
@@ -50,6 +58,20 @@ INDEX_NAME = (getattr(_ST, "pinecone_index", "") if _ST else "") or \
     os.getenv("PINECONE_INDEX", "nyaya-sathi")
 NS_STATUTE = "statutes"
 NS_JUDGMENT = "judgments"
+
+# Extension corpus. Separate namespace so it is independently deletable.
+NS_STATUTE_EXT = (getattr(_ST, "pinecone_ns_statute_ext", "") if _ST else "") or \
+    os.getenv("PINECONE_NS_STATUTE_EXT", "statutes-ext")
+
+# Every namespace dense retrieval should search, in order. Pinecone queries one
+# namespace per call, so this is a loop at read time - two cheap ANN lookups
+# reusing one embedding, not two embedding calls.
+def statute_namespaces() -> List[str]:
+    raw = (getattr(_ST, "pinecone_statute_namespaces", "") if _ST else "") or \
+        os.getenv("PINECONE_STATUTE_NAMESPACES", "")
+    if raw:
+        return [n.strip() for n in raw.split(",") if n.strip()]
+    return [NS_STATUTE, NS_STATUTE_EXT]
 
 # Pinecone rejects an upsert batch over ~4MB. 100 vectors of 768 floats plus
 # metadata sits well inside that.
@@ -166,6 +188,56 @@ def delete_parent(index, parent_id: str, namespace: str) -> None:
     index.delete(filter={"parent_id": {"$eq": parent_id}}, namespace=namespace)
 
 
+def delete_namespace(index, namespace: str) -> None:
+    """Drop an entire namespace.
+
+    This is the rollback path for an extension ingest: one call, everything
+    in that namespace gone, the hand-checked `statutes` namespace untouched.
+    Pinecone treats deleting a namespace that does not exist as a no-op on
+    some plans and a 404 on others, so the caller should tolerate both.
+    """
+    index.delete(delete_all=True, namespace=namespace)
+
+
+def delete_batch(index, corpus_batch: str, namespace: str) -> None:
+    """Delete by the `corpus_batch` metadata tag.
+
+    Finer-grained than dropping a namespace: use this when the extension was
+    ingested into the shared `statutes` namespace instead of its own, so a
+    namespace delete would take the original corpus with it.
+
+    Serverless indexes do not support delete-by-filter on every plan. If this
+    raises, fall back to delete_namespace or to deleting the known chunk ids.
+    """
+    index.delete(filter={"corpus_batch": {"$eq": corpus_batch}}, namespace=namespace)
+
+
+def fetch_existing_ids(index, ids: Sequence[str], namespace: str) -> set:
+    """Which of these chunk ids are already in the index?
+
+    This is what makes ingestion idempotent without a second source of truth.
+    Chunk ids are deterministic (statute:pocso:4:v1:0), so a re-run can ask
+    Pinecone directly what it already has and skip the embedding call for
+    those - the embedding call being the only expensive part.
+
+    Fetch is capped per request, so this batches.
+    """
+    have = set()
+    ids = list(ids)
+    for start in range(0, len(ids), 100):
+        batch = ids[start : start + 100]
+        try:
+            res = index.fetch(ids=batch, namespace=namespace)
+        except Exception as exc:
+            logger.warning("fetch failed (%s); treating batch as absent", exc)
+            continue
+        vectors = getattr(res, "vectors", None)
+        if vectors is None and isinstance(res, dict):
+            vectors = res.get("vectors") or {}
+        have.update((vectors or {}).keys())
+    return have
+
+
 # --- reading --------------------------------------------------------------
 
 def build_filter(
@@ -195,6 +267,24 @@ def build_filter(
     if court_levels:
         f["court_level"] = {"$in": list(court_levels)}
     return f
+
+
+def query_many(index, vector: List[float], *, namespaces: Sequence[str],
+               top_k: int = 5, filter: Optional[Dict[str, Any]] = None
+               ) -> List[Dict[str, Any]]:
+    """Query several namespaces with one vector and merge by score.
+
+    A namespace that does not exist yet returns nothing rather than raising,
+    so this stays safe before the extension corpus has been ingested.
+    """
+    out: List[Dict[str, Any]] = []
+    for ns in namespaces:
+        try:
+            out.extend(query(index, vector, namespace=ns, top_k=top_k, filter=filter))
+        except Exception as exc:
+            logger.warning("Namespace %s unavailable (%s); skipping", ns, exc)
+    out.sort(key=lambda m: m.get("_score", 0.0), reverse=True)
+    return out[:top_k]
 
 
 def query(index, vector: List[float], *, namespace: str, top_k: int = 5,
