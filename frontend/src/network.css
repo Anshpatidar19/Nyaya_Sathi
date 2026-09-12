@@ -1,0 +1,739 @@
+/* ===========================================================================
+   Advocate network styles
+   ===========================================================================
+   A separate stylesheet rather than 600 more lines in styles.css, so the
+   existing design is not touched and this can be removed in one line if the
+   feature is ever pulled.
+
+   Every colour here is one of the existing custom properties from
+   styles.css - no new hex values. That is what makes the dark theme work
+   without a second set of rules: --surface, --ink, --accent and friends are
+   already redefined under [data-theme="dark"], so these components follow
+   automatically.
+   =========================================================================== */
+
+/* ---------- control sizing ---------- */
+/* The card footers and dialogs place primary and ghost buttons side by
+   side, and `.btn` vs `.btn.sm` differ in padding but not in a stated
+   height - so a row of mixed buttons sat at slightly different heights
+   depending on its label. Pinning a min-height fixes the alignment without
+   touching either button's look. */
+
+.nx-adv-foot .btn,
+.nx-req-actions .btn,
+.nx-conn-actions .btn,
+.nx-avatar-btns .btn,
+.nx-pager .btn { min-height: 32px; }
+
+.nx-dialog-actions .btn { min-height: 38px; }
+
+/* Focus that is visible without being loud, and only for keyboard users. */
+.nx-notif:focus-visible,
+.nx-thread-row:focus-visible,
+.nx-bell:focus-visible,
+.nx-back:focus-visible,
+.nx-search-input:focus-visible,
+.nx-empty .btn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* Disabled inputs should read as disabled. The email field on the profile
+   form was indistinguishable from an editable one. */
+.nx-field input:disabled,
+.nx-textarea:disabled {
+  background: var(--bg);
+  color: var(--ink-faint);
+  cursor: not-allowed;
+}
+
+/* ---------- avatars ---------- */
+
+.nx-avatar {
+  border-radius: 50%;
+  object-fit: cover;
+  flex-shrink: 0;
+  background: var(--accent-soft);
+  border: 1px solid var(--line);
+  display: block;
+}
+.nx-avatar-initials {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--accent-dark);
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  border-color: var(--mint-line);
+}
+
+/* ---------- badges ---------- */
+
+.nx-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: var(--bg);
+  color: var(--ink-muted);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+.nx-badge-advocate {
+  background: var(--mint);
+  border-color: var(--mint-line);
+  color: var(--accent-dark);
+}
+/* Demo accounts are marked everywhere they appear, so seeded test data is
+   never mistaken for a real advocate. */
+.nx-badge-demo {
+  background: transparent;
+  border-color: var(--amber);
+  color: var(--amber);
+}
+.nx-status-pending { border-color: var(--amber); color: var(--amber); }
+.nx-status-accepted {
+  background: var(--mint);
+  border-color: var(--mint-line);
+  color: var(--accent-dark);
+}
+.nx-status-rejected,
+.nx-status-cancelled { border-color: var(--line); color: var(--ink-faint); }
+
+.nx-inline-note { font-size: 12.5px; color: var(--ink-faint); }
+.nx-dot { margin: 0 6px; color: var(--ink-faint); }
+.nx-fine { font-size: 12px; color: var(--ink-faint); line-height: 1.55; margin: 6px 0 0; }
+.nx-hint { font-size: 11.5px; color: var(--ink-faint); }
+
+/* ---------- nav additions ---------- */
+
+.nx-nav-divider { margin: 10px 0 8px; }
+/* A label over the second nav group. Without it the two halves ran together
+   as one undifferentiated list of seven items. */
+.nx-nav-group {
+  padding: 0 10px 6px;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: .07em;
+  color: var(--ink-faint);
+}
+.nx-nav-badge {
+  margin-left: auto;
+  flex-shrink: 0;
+  min-width: 19px;
+  height: 19px;
+  padding: 0 5px;
+  border-radius: 999px;
+  background: var(--accent);
+  color: var(--on-accent);
+  font-size: 11px;
+  font-weight: 800;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.nx-sidebar-user { text-decoration: none; color: inherit; }
+.nx-sidebar-user:hover .name { color: var(--accent-dark); }
+.nx-sidebar-spacer { flex: 1; min-height: 12px; }
+.nx-user-chip { text-decoration: none; color: inherit; }
+
+.nx-bell {
+  position: relative;
+  width: 34px; height: 34px; padding: 7px;
+  display: flex; align-items: center; justify-content: center;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-s);
+  background: var(--surface);
+  color: var(--ink-muted);
+  cursor: pointer;
+  transition: color .15s, border-color .15s, background .15s;
+}
+.nx-bell:hover { color: var(--accent-dark); border-color: var(--accent); background: var(--accent-soft); }
+.nx-bell svg { width: 19px; height: 19px; }
+.nx-bell-dot {
+  position: absolute; top: -5px; right: -5px;
+  min-width: 17px; height: 17px; padding: 0 4px;
+  border-radius: 999px;
+  background: var(--danger);
+  color: #fff;
+  font-size: 10px; font-weight: 800;
+  display: flex; align-items: center; justify-content: center;
+}
+
+/* ---------- shared layout ---------- */
+
+.page-wrap.nx-narrow { max-width: 860px; }
+
+.nx-back {
+  border: 0; background: transparent; padding: 0;
+  margin-bottom: 16px;
+  color: var(--ink-muted); font-size: 13.5px; font-weight: 600;
+  cursor: pointer; font-family: inherit;
+}
+.nx-back:hover { color: var(--accent-dark); }
+
+.nx-list { display: flex; flex-direction: column; gap: 10px; }
+
+.nx-notice {
+  margin-bottom: 16px; padding: 10px 14px;
+  border: 1px solid var(--mint-line); border-radius: var(--radius-s);
+  background: var(--mint); color: var(--accent-dark);
+  font-size: 13.5px; font-weight: 600;
+}
+
+.nx-section {
+  margin: 20px 0;
+  padding: 22px 24px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-m);
+  background: var(--surface);
+}
+.nx-section h2 {
+  display: flex; align-items: center; gap: 10px;
+  margin: 0 0 16px; font-size: 16px; letter-spacing: -0.01em;
+}
+
+.nx-field-row {
+  display: grid; grid-template-columns: 190px 1fr; gap: 14px;
+  padding: 9px 0; border-bottom: 1px solid var(--line);
+  font-size: 14px;
+}
+.nx-field-row:last-child { border-bottom: 0; }
+.nx-field-label { color: var(--ink-faint); font-size: 13px; font-weight: 600; }
+.nx-field-value { color: var(--ink); min-width: 0; }
+.nx-prose { margin: 0; font-size: 14.5px; line-height: 1.7; color: var(--ink-muted); }
+
+.nx-disclaimer {
+  margin: 0 0 20px;
+  padding: 11px 14px;
+  border: 1px dashed var(--mint-line);
+  border-radius: var(--radius-s);
+  background: var(--accent-soft);
+  color: var(--ink-muted);
+  font-size: 12.5px;
+  line-height: 1.6;
+}
+.nx-disclaimer.compact { margin-bottom: 14px; font-size: 11.5px; padding: 8px 12px; }
+
+.nx-dialog-actions {
+  display: flex; justify-content: flex-end; gap: 10px; margin-top: 20px;
+}
+.nx-dialog-actions.left { justify-content: flex-start; }
+.nx-confirm { max-width: 440px; }
+
+.nx-textarea {
+  width: 100%;
+  padding: 11px 13px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-s);
+  background: var(--surface);
+  color: var(--ink);
+  font-family: inherit;
+  font-size: 14px;
+  line-height: 1.6;
+  resize: vertical;
+}
+.nx-textarea:focus { outline: none; border-color: var(--accent); }
+.nx-counter { margin-top: 5px; font-size: 11.5px; color: var(--ink-faint); text-align: right; }
+
+.nx-form-grid {
+  display: grid; grid-template-columns: 1fr 1fr; gap: 0 16px;
+}
+.nx-field { margin-bottom: 14px; }
+
+.nx-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.nx-chip {
+  padding: 3px 9px;
+  border: 1px solid var(--line); border-radius: 999px;
+  background: var(--bg); color: var(--ink-muted);
+  font-size: 11.5px; font-weight: 600;
+}
+.nx-chip-more { border-style: dashed; color: var(--ink-faint); }
+
+.nx-switch {
+  display: flex; align-items: flex-start; gap: 10px;
+  margin-bottom: 18px; padding: 12px 14px;
+  border: 1px solid var(--line); border-radius: var(--radius-s);
+  background: var(--bg); cursor: pointer;
+  font-size: 13.5px; font-weight: 600;
+}
+.nx-switch input { margin-top: 3px; accent-color: var(--accent); }
+.nx-switch span { display: flex; flex-direction: column; gap: 2px; }
+.nx-switch .nx-fine { margin: 0; font-weight: 500; }
+
+.nx-avatar-editor { display: flex; align-items: flex-start; gap: 18px; }
+.nx-avatar-controls { flex: 1; min-width: 0; }
+.nx-avatar-btns { display: flex; gap: 8px; margin-bottom: 4px; }
+
+/* ---------- empty states ---------- */
+/* Replaces the dashed `.page-empty` box used across these pages. A single
+   sentence floating in a tall dashed rectangle reads as an unfinished
+   screen; an icon, a title and one supporting line reads as a state. */
+
+.nx-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  padding: 44px 24px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-m);
+  background: var(--surface);
+  text-align: center;
+}
+.nx-empty-ic {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px; height: 44px;
+  margin-bottom: 2px;
+  border-radius: 50%;
+  background: var(--accent-soft);
+  color: var(--accent-dark);
+}
+.nx-empty-ic svg { width: 22px; height: 22px; }
+.nx-empty-title { margin: 0; font-size: 15.5px; letter-spacing: -0.01em; color: var(--ink); }
+.nx-empty-text {
+  margin: 0; max-width: 380px;
+  font-size: 13.5px; line-height: 1.6; color: var(--ink-muted);
+}
+.nx-empty .btn { margin-top: 6px; }
+
+/* ---------- search ---------- */
+
+.nx-search-bar {
+  display: flex; align-items: center; gap: 10px;
+  padding: 10px 14px; margin-bottom: 12px;
+  border: 1px solid var(--line); border-radius: var(--radius-m);
+  background: var(--surface);
+}
+.nx-search-bar:focus-within { border-color: var(--accent); }
+.nx-search-ic { display: flex; color: var(--ink-faint); flex-shrink: 0; }
+.nx-search-ic svg { width: 18px; height: 18px; }
+.nx-search-input {
+  flex: 1; min-width: 0;
+  border: 0; background: transparent; color: var(--ink);
+  font-family: inherit; font-size: 15px;
+}
+.nx-search-input:focus { outline: none; }
+
+.nx-filter-row {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(158px, 1fr));
+  gap: 10px;
+  margin-bottom: 18px;
+}
+.nx-filter label {
+  display: block; margin-bottom: 5px;
+  font-size: 11.5px; font-weight: 700; text-transform: uppercase;
+  letter-spacing: 0.05em; color: var(--ink-faint);
+}
+.nx-filter select {
+  width: 100%; padding: 8px 10px;
+  border: 1px solid var(--line); border-radius: var(--radius-s);
+  background: var(--surface); color: var(--ink);
+  font-family: inherit; font-size: 13.5px;
+}
+.nx-filter select:focus { outline: none; border-color: var(--accent); }
+
+.nx-result-count {
+  margin: 0 0 14px; font-size: 13px; color: var(--ink-faint); font-weight: 600;
+}
+
+/* The tab row sits closer to its tabs than to the content below it, so the
+   count reads as belonging to the tab rather than to the list. */
+.seg-tabs + .nx-list,
+.seg-tabs + .nx-empty,
+.seg-tabs + .nx-disclaimer { margin-top: 20px; }
+
+.nx-card-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(330px, 1fr));
+  gap: 14px;
+}
+/* Results stay visible and readable while the next page loads, rather than
+   flashing to a skeleton on every filter change. */
+.nx-card-grid.is-stale { opacity: .55; transition: opacity .15s; }
+
+.nx-adv-card {
+  display: flex; flex-direction: column; gap: 11px;
+  padding: 18px;
+  border: 1px solid var(--line); border-radius: var(--radius-m);
+  background: var(--surface);
+  transition: border-color .15s, box-shadow .15s;
+}
+.nx-adv-card:hover { border-color: var(--mint-line); box-shadow: var(--shadow-soft); }
+.nx-adv-top { display: flex; gap: 13px; align-items: flex-start; }
+.nx-adv-ident { min-width: 0; flex: 1; }
+.nx-adv-name-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.nx-adv-name-row h3 { margin: 0; font-size: 15.5px; letter-spacing: -0.01em; }
+.nx-adv-name-row h1 { margin: 0; font-size: 26px; letter-spacing: -0.025em; }
+.nx-adv-sub { margin-top: 3px; font-size: 13px; font-weight: 600; color: var(--accent-dark); }
+.nx-adv-meta { margin-top: 3px; font-size: 12.5px; color: var(--ink-faint); }
+.nx-adv-bio {
+  margin: 0; font-size: 13.5px; line-height: 1.6; color: var(--ink-muted);
+}
+.nx-adv-courts { font-size: 12px; color: var(--ink-faint); line-height: 1.5; }
+.nx-adv-label {
+  display: block; font-size: 10.5px; font-weight: 700;
+  text-transform: uppercase; letter-spacing: 0.05em; color: var(--ink-faint);
+  margin-bottom: 2px;
+}
+.nx-adv-foot {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 10px; flex-wrap: wrap;
+  margin-top: auto; padding-top: 12px; border-top: 1px solid var(--line);
+}
+.nx-adv-actions { display: flex; gap: 8px; margin-left: auto; }
+
+.nx-pager {
+  display: flex; align-items: center; justify-content: center; gap: 16px;
+  margin-top: 26px;
+}
+.nx-pager-label { font-size: 13px; color: var(--ink-faint); font-weight: 600; }
+
+/* ---------- profile head ---------- */
+
+.nx-profile-head {
+  display: flex; align-items: flex-start; gap: 18px;
+  padding-bottom: 20px; margin-bottom: 20px;
+  border-bottom: 1px solid var(--line);
+}
+.nx-profile-ident { flex: 1; min-width: 0; }
+.nx-profile-role { margin-top: 5px; font-size: 14px; font-weight: 600; color: var(--accent-dark); }
+.nx-profile-meta { margin-top: 3px; font-size: 13px; color: var(--ink-faint); }
+.nx-profile-firm { margin-top: 6px; font-size: 13.5px; color: var(--ink-muted); }
+.nx-profile-actions {
+  display: flex; flex-direction: column; align-items: flex-end; gap: 9px; flex-shrink: 0;
+}
+.nx-skel-head { display: flex; gap: 16px; }
+
+/* ---------- requests & connections ---------- */
+
+.nx-req-card,
+.nx-conn-card {
+  display: flex; align-items: flex-start; gap: 14px;
+  padding: 16px 18px;
+  border: 1px solid var(--line); border-radius: var(--radius-m);
+  background: var(--surface);
+  transition: border-color .15s, box-shadow .15s;
+}
+.nx-req-card:hover,
+.nx-conn-card:hover { border-color: var(--mint-line); box-shadow: var(--shadow-soft); }
+/* A one-line row and a row with a quoted intro sat at wildly different
+   heights in the same list. */
+.nx-conn-card { min-height: 76px; align-items: center; }
+.nx-req-card { align-items: flex-start; }
+.nx-conn-actions, .nx-req-actions { margin-left: auto; }
+.nx-req-body, .nx-conn-body { flex: 1; min-width: 0; }
+.nx-req-body h3, .nx-conn-body h3 { margin: 0; font-size: 15px; letter-spacing: -0.01em; }
+.nx-req-actions, .nx-conn-actions {
+  display: flex; gap: 8px; flex-shrink: 0; align-items: center;
+}
+.nx-quote {
+  margin: 9px 0 0; padding: 9px 12px;
+  border-left: 2px solid var(--mint-line);
+  background: var(--bg);
+  border-radius: 0 var(--radius-s) var(--radius-s) 0;
+  font-size: 13.5px; line-height: 1.6; color: var(--ink-muted);
+}
+
+/* ---------- notifications ---------- */
+
+.nx-notif {
+  display: flex; align-items: flex-start; gap: 12px;
+  width: 100%; padding: 14px 16px; text-align: left;
+  border: 1px solid var(--line); border-radius: var(--radius-m);
+  background: var(--surface); cursor: pointer; font-family: inherit;
+  transition: border-color .15s, background .15s;
+}
+.nx-notif:hover { border-color: var(--mint-line); background: var(--accent-soft); }
+.nx-notif.unread { border-left: 3px solid var(--accent); background: var(--accent-soft); }
+.nx-notif.unread .nx-notif-title { color: var(--accent-dark); }
+/* Sits at the right edge so the row reads as tappable rather than as a
+   static list item. */
+.nx-notif-chev {
+  margin-left: auto; align-self: center; flex-shrink: 0;
+  font-size: 20px; line-height: 1; color: var(--ink-faint);
+}
+.nx-notif:hover .nx-notif-chev { color: var(--accent-dark); }
+.nx-notif-dot {
+  width: 8px; height: 8px; border-radius: 50%;
+  margin-top: 6px; flex-shrink: 0;
+  background: var(--ink-faint);
+}
+.nx-notif-dot.t-connection_request { background: var(--amber); }
+.nx-notif-dot.t-connection_accepted { background: var(--accent); }
+.nx-notif-dot.t-connection_rejected { background: var(--danger); }
+.nx-notif-dot.t-new_message { background: var(--accent-dark); }
+.nx-notif-body { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.nx-notif-title { font-size: 14px; font-weight: 700; color: var(--ink); }
+.nx-notif-text { font-size: 13px; color: var(--ink-muted); line-height: 1.55; }
+.nx-notif-time { font-size: 11.5px; color: var(--ink-faint); }
+
+/* ---------- chat ---------- */
+/* One full-width column, not a rail plus a pane. The 320px conversation
+   rail was mostly empty at two conversations and cost the chat a third of
+   its width; /messages is now the list and /messages/:id is the
+   conversation. See the note at the top of Messages.jsx. */
+
+/* -- conversation list -- */
+
+.nx-thread-card {
+  display: flex; align-items: center; gap: 14px;
+  width: 100%; padding: 14px 18px; text-align: left;
+  border: 1px solid var(--line); border-radius: var(--radius-m);
+  background: var(--surface); cursor: pointer; font-family: inherit;
+  transition: border-color .15s, box-shadow .15s, background .15s;
+}
+.nx-thread-card:hover { border-color: var(--mint-line); box-shadow: var(--shadow-soft); }
+.nx-thread-card:active { transform: translateY(1px); }
+.nx-thread-card:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+/* An unread conversation earns the accent rail, same language as an unread
+   notification. */
+.nx-thread-card.unread { border-left: 3px solid var(--accent); }
+
+.nx-thread-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 4px; }
+.nx-thread-top { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.nx-thread-name { font-size: 15px; font-weight: 700; color: var(--ink); letter-spacing: -0.01em; }
+.nx-thread-spec { font-size: 12.5px; font-weight: 600; color: var(--accent-dark); }
+.nx-thread-preview {
+  font-size: 13px; color: var(--ink-faint);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.nx-thread-card.unread .nx-thread-preview { color: var(--ink-muted); font-weight: 600; }
+.nx-thread-side {
+  display: flex; flex-direction: column; align-items: flex-end; gap: 7px;
+  flex-shrink: 0;
+}
+.nx-thread-time { font-size: 11.5px; color: var(--ink-faint); white-space: nowrap; }
+.nx-thread-badge {
+  min-width: 20px; height: 20px; padding: 0 6px;
+  border-radius: 999px; background: var(--accent); color: var(--on-accent);
+  font-size: 11px; font-weight: 800;
+  display: flex; align-items: center; justify-content: center;
+}
+.nx-thread-skel {
+  display: flex; gap: 14px; padding: 14px 18px;
+  border: 1px solid var(--line); border-radius: var(--radius-m);
+  background: var(--surface);
+}
+
+/* -- conversation -- */
+/* Fixed column filling the shell: header and composer pinned, only the
+   history scrolls. */
+
+.nx-chat { display: flex; flex-direction: column; height: 100%; min-height: 0; }
+
+/* Everything inside the chat shares one centred measure. Full-bleed text on
+   a wide monitor is unreadable, and it was the real cause of the page
+   feeling both empty and sprawling at once. */
+/* The message stream and the composer share one centred measure - full-bleed
+   text on a wide monitor is unreadable. The HEADER does not: it is a bar, so
+   it spans the panel with its content anchored left and the Profile button at
+   the far right, the way every messaging app does it. Centring the header
+   inside the 860px measure left it floating in the middle of the panel. */
+.nx-chat-stream,
+.nx-compose-inner {
+  width: 100%; max-width: 860px; margin: 0 auto;
+}
+.nx-chat-head-inner { display: flex; align-items: center; gap: 13px; width: 100%; }
+
+.nx-chat-head {
+  flex-shrink: 0;
+  padding: 13px 24px;
+  border-bottom: 1px solid var(--line);
+  background: var(--surface);
+}
+.nx-chat-ident { flex: 1; min-width: 0; }
+.nx-chat-name { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.nx-chat-name strong { font-size: 15.5px; letter-spacing: -0.01em; }
+.nx-chat-role {
+  margin-top: 2px;
+  font-size: 12.5px; font-weight: 600; color: var(--accent-dark);
+}
+
+/* Back to the list. Always visible now - it is the only way back, since
+   there is no rail. */
+.nx-chat-back {
+  display: flex; align-items: center; justify-content: center;
+  width: 32px; height: 32px; flex-shrink: 0; padding: 0;
+  border: 1px solid var(--line); border-radius: var(--radius-s);
+  background: var(--surface); color: var(--ink-muted); cursor: pointer;
+  transition: color .15s, border-color .15s, background .15s;
+}
+.nx-chat-back:hover { color: var(--accent-dark); border-color: var(--accent); background: var(--accent-soft); }
+.nx-chat-back:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.nx-chat-back svg { width: 18px; height: 18px; }
+
+.nx-chat-scroll {
+  flex: 1; min-height: 0; overflow-y: auto;
+  padding: 20px 28px 12px;
+  display: flex; flex-direction: column;
+}
+/* Pushes a short conversation down to sit above the composer instead of
+   stranding two messages at the top of a tall blank column. */
+.nx-chat-stream { margin-top: auto; }
+
+.nx-chat-loading {
+  padding: 30px 0; text-align: center;
+  color: var(--ink-faint); font-size: 13.5px;
+}
+.nx-chat-intro { padding: 22px 0 8px; text-align: center; color: var(--ink-muted); }
+.nx-chat-intro h4 { margin: 0 0 8px; font-size: 15px; color: var(--ink); }
+.nx-chat-intro p { margin: 0 auto; max-width: 440px; font-size: 13.5px; line-height: 1.65; }
+
+.nx-chat-day {
+  display: flex; align-items: center; justify-content: center;
+  margin: 18px 0 12px;
+}
+.nx-chat-day span {
+  padding: 3px 12px; border-radius: 999px;
+  background: var(--bg); border: 1px solid var(--line);
+  font-size: 10.5px; font-weight: 700; color: var(--ink-faint);
+  text-transform: uppercase; letter-spacing: .06em;
+}
+
+/* -- bubbles -- */
+
+.nx-msg { display: flex; margin-bottom: 10px; }
+.nx-msg.mine { justify-content: flex-end; }
+/* Consecutive messages from the same person close up and lose the tail, so
+   a back-and-forth reads as two voices rather than a stack of cards. */
+.nx-msg.grouped { margin-bottom: 3px; }
+
+.nx-msg-bubble {
+  position: relative;
+  max-width: min(74%, 560px);
+  padding: 9px 13px 8px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--surface);
+  color: var(--ink);
+  font-size: 14.5px; line-height: 1.55;
+}
+/* A small square corner on the sender's side is what reads as a tail
+   without drawing one. */
+.nx-msg:not(.mine):not(.grouped) .nx-msg-bubble { border-bottom-left-radius: 5px; }
+.nx-msg.mine:not(.grouped) .nx-msg-bubble { border-bottom-right-radius: 5px; }
+.nx-msg.mine .nx-msg-bubble {
+  background: var(--mint);
+  border-color: var(--mint-line);
+}
+
+.nx-msg-text {
+  /* Preserves newlines typed with Shift+Enter, and breaks a pasted URL
+     instead of forcing the bubble wider than its column. */
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+/* Inline and trailing, so a three-word message is one line with the clock
+   tucked at the end rather than a two-line block. */
+.nx-msg-time {
+  display: inline-flex; align-items: center; gap: 3px;
+  margin-left: 8px; float: right;
+  transform: translateY(5px);
+  font-size: 10.5px; color: var(--ink-faint); white-space: nowrap;
+}
+.nx-msg.mine .nx-msg-time { color: var(--accent-dark); opacity: .75; }
+.nx-msg-read { font-weight: 700; letter-spacing: -1px; }
+
+/* -- composer -- */
+/* One control, not a box inside a box. The textarea used to carry its own
+   border and sit inside the bordered footer strip, which read as two nested
+   containers; the border now lives on the wrapper only and the textarea is
+   transparent inside it. */
+
+.nx-chat-compose {
+  flex-shrink: 0;
+  padding: 12px 24px 20px;
+  /* Deliberately no border-top and no background. The single rounded box
+     below IS the composer; wrapping it in a bordered --surface strip is
+     what made it read as a box inside a box. */
+  background: transparent;
+}
+
+.nx-compose-box {
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+  padding: 6px 6px 6px 16px;
+  border: 1px solid var(--line);
+  /* radius-m rather than a full pill: a pill looks right at one line and
+     wrong the moment the textarea grows to five. */
+  border-radius: var(--radius-m);
+  /* --surface, not --bg. With the outer strip removed the page behind this
+     IS --bg, so a --bg box would have been invisible apart from its
+     hairline. --surface makes the one control read as a control. */
+  background: var(--surface);
+  box-shadow: var(--shadow-soft);
+  transition: border-color .15s, box-shadow .15s;
+}
+.nx-compose-box:focus-within {
+  border-color: var(--accent);
+}
+
+.nx-compose-input {
+  flex: 1;
+  min-width: 0;
+  /* Lines up with the 34px send button when empty. */
+  min-height: 34px;
+  max-height: 176px;
+  padding: 7px 0 6px;
+  border: 0;
+  background: transparent;
+  color: var(--ink);
+  font-family: inherit;
+  font-size: 14.5px;
+  line-height: 1.5;
+  resize: none;
+  overflow-y: auto;
+}
+.nx-compose-input:focus { outline: none; }
+.nx-compose-input::placeholder { color: var(--ink-faint); }
+
+.nx-send {
+  flex-shrink: 0;
+  min-height: 34px;
+  padding: 0 18px;
+  border-radius: 12px;
+}
+
+.nx-compose-count {
+  align-self: center;
+  flex-shrink: 0;
+  font-size: 11px;
+  color: var(--ink-faint);
+  white-space: nowrap;
+}
+
+.nx-compose-error { margin-bottom: 8px; }
+
+/* ---------- responsive ---------- */
+
+@media (max-width: 900px) {
+  .nx-form-grid { grid-template-columns: 1fr; }
+  .nx-field-row { grid-template-columns: 1fr; gap: 2px; }
+  .nx-profile-head { flex-wrap: wrap; }
+  .nx-profile-actions { flex-direction: row; align-items: center; width: 100%; }
+  .nx-req-card, .nx-conn-card { flex-wrap: wrap; }
+  .nx-req-actions, .nx-conn-actions { width: 100%; }
+
+  .nx-chat-head, .nx-chat-scroll, .nx-chat-compose {
+    padding-left: 16px; padding-right: 16px;
+  }
+  .nx-send { padding: 0 14px; }
+  .nx-msg-bubble { max-width: 86%; }
+  .nx-thread-card { padding: 12px 14px; }
+  .nx-thread-spec { display: none; }
+}
+
+@media (max-width: 560px) {
+  .nx-card-grid { grid-template-columns: 1fr; }
+  .nx-filter-row { grid-template-columns: 1fr 1fr; }
+}

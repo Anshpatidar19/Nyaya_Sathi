@@ -7,6 +7,7 @@ from sqlalchemy import (
     Date,
     DateTime,
     ForeignKey,
+    Index,
     Integer,
     String,
     Text,
@@ -35,6 +36,24 @@ class User(Base):
     preferred_language = Column(String, default="en")
     state = Column(String, nullable=True)
 
+    # --- networking profile fields ----------------------------------------
+    # Added for the advocate-discovery feature. All nullable: accounts that
+    # existed before this feature keep working and simply show an incomplete
+    # profile until the owner fills it in.
+    city = Column(String, nullable=True, index=True)
+    bio = Column(Text, nullable=True)
+    # Key inside the avatars bucket, not a URL. Unlike legal documents,
+    # avatars live in a PUBLIC bucket - they are shown to every user in
+    # search results, and signing a URL per row would mean 30 extra round
+    # trips to Supabase for one page of results.
+    avatar_path = Column(String, nullable=True)
+
+    # True only for seeded test accounts. This is what makes the demo data
+    # removable in one filtered delete that cannot reach a real account.
+    is_demo = Column(
+        Boolean, nullable=False, default=False, server_default="false", index=True
+    )
+
     # "user" or "advocate". Chosen at signup and never verified - this is a
     # product distinction (which tools you see), not a security boundary.
     role = Column(String, nullable=False, default="user", server_default="user")
@@ -49,6 +68,12 @@ class User(Base):
     )
     documents = relationship(
         "Document", back_populates="user", cascade="all, delete-orphan"
+    )
+    advocate_profile = relationship(
+        "AdvocateProfile",
+        back_populates="user",
+        uselist=False,
+        cascade="all, delete-orphan",
     )
 
 
@@ -150,7 +175,13 @@ class MatterNote(Base):
 
 
 class Conversation(Base):
-    """A thread of questions. Follow-ups need somewhere to hang off.
+    """A thread of questions put to the AI. Follow-ups need somewhere to hang
+    off.
+
+    NOTE: this is the AI Q&A thread, NOT the advocate chat. Person-to-person
+    messaging lives in ChatThread / ChatMessage below. The two were kept
+    under different names deliberately - reusing this table for chat would
+    have broken /conversations, /ask/history and the Matter research tab.
 
     Title is taken from the first question so the sidebar has something
     readable without a separate summarisation call.
@@ -225,6 +256,13 @@ class Document(Base):
     user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
     # Filed under a matter, or loose if uploaded straight into a chat.
     matter_id = Column(Integer, ForeignKey("matters.id"), nullable=True, index=True)
+    # Set when the file was shared as a chat attachment. Access control then
+    # follows the thread's participants rather than the uploader alone, so
+    # the advocate on the other side can open what the client sent.
+    message_id = Column(
+        Integer, ForeignKey("chat_messages.id", ondelete="SET NULL"),
+        nullable=True, index=True,
+    )
     filename = Column(String, nullable=False)          # original name, for display
     storage_path = Column(String, nullable=False, unique=True)
     content_type = Column(String, nullable=True)
@@ -236,6 +274,7 @@ class Document(Base):
 
     user = relationship("User", back_populates="documents")
     matter = relationship("Matter", back_populates="documents")
+    message = relationship("ChatMessage", back_populates="attachments")
 
 
 class AnswerTranslation(Base):
@@ -267,3 +306,299 @@ class AnswerTranslation(Base):
     next_steps_json = Column(Text, nullable=True)
 
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
+
+
+# ===========================================================================
+# Advocate discovery, connections and messaging
+# ===========================================================================
+#
+# Everything below is the "Find an Advocate -> connect -> chat" layer. Three
+# design notes, because they are the decisions that would otherwise look
+# arbitrary later:
+#
+#   1. Chat lives in ChatThread/ChatMessage, never in Conversation. See the
+#      note on Conversation above.
+#   2. A chat thread hangs off an accepted Connection, not off two user ids.
+#      That means "can these two talk?" is answered by the connection's
+#      status - there is no way to open a thread without an acceptance.
+#   3. Practice areas, courts and languages are comma-separated strings
+#      rather than join tables. Searching them is an ILIKE, which is fine at
+#      this scale and keeps the migration to one file. If the advocate list
+#      ever grows past a few thousand rows, these become join tables and the
+#      search endpoint is the only thing that has to change.
+
+
+# Connection status values. Kept as plain strings rather than a Postgres enum
+# so adding a state later is a code change, not a migration.
+CONNECTION_PENDING = "pending"
+CONNECTION_ACCEPTED = "accepted"
+CONNECTION_REJECTED = "rejected"
+CONNECTION_CANCELLED = "cancelled"
+
+CONNECTION_STATUSES = {
+    CONNECTION_PENDING,
+    CONNECTION_ACCEPTED,
+    CONNECTION_REJECTED,
+    CONNECTION_CANCELLED,
+}
+
+
+class AdvocateProfile(Base):
+    """The professional half of an advocate's account.
+
+    Separate from User rather than a pile of nullable columns on it, because
+    a client account has none of these fields and because the existence of
+    this row is what makes an advocate appear in search. An advocate account
+    with no profile row is invisible until its owner fills one in - which is
+    deliberate: it keeps real accounts that signed up before this feature out
+    of the directory until they opt in.
+    """
+
+    __tablename__ = "advocate_profiles"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(
+        Integer, ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False, unique=True, index=True,
+    )
+
+    # Professional identity
+    bar_council_number = Column(String, nullable=True)
+    years_experience = Column(Integer, nullable=True, index=True)
+    professional_bio = Column(Text, nullable=True)
+    current_firm = Column(String, nullable=True)
+    # Where they actually practise, when it differs from the city on the
+    # account (an advocate living in Dewas but practising in Indore).
+    practice_city = Column(String, nullable=True, index=True)
+
+    # The headline area, shown on the search card.
+    specialization = Column(String, nullable=True, index=True)
+    # Comma-separated. "Criminal Law, Bail Matters, Cheque Bounce"
+    practice_areas = Column(String, nullable=True)
+    # Comma-separated. "District Court Indore, MP High Court"
+    courts = Column(String, nullable=True)
+    # Comma-separated. "Hindi, English"
+    languages = Column(String, nullable=True)
+
+    # Education
+    llb_college = Column(String, nullable=True)
+    llb_year = Column(Integer, nullable=True)
+    llm_college = Column(String, nullable=True)
+    other_qualifications = Column(String, nullable=True)
+
+    # Experience narrative
+    previous_firms = Column(Text, nullable=True)
+    notable_experience = Column(Text, nullable=True)
+
+    # An advocate can take themselves out of the directory without deleting
+    # their profile. Search filters on this.
+    is_listed = Column(
+        Boolean, nullable=False, default=True, server_default="true", index=True
+    )
+
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+    updated_at = Column(
+        DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow
+    )
+
+    user = relationship("User", back_populates="advocate_profile")
+
+
+class Connection(Base):
+    """A request from one account to another, and its outcome.
+
+    The unique constraint on (requester_id, receiver_id) is what makes
+    duplicate requests impossible at the database level rather than only in
+    the handler. A re-request after a rejection UPDATES this row back to
+    pending instead of inserting a second one - so the pair always has
+    exactly one row, and its status is the whole story.
+    """
+
+    __tablename__ = "connections"
+    __table_args__ = (
+        UniqueConstraint("requester_id", "receiver_id", name="uq_connection_pair"),
+        Index("ix_connections_receiver_status", "receiver_id", "status"),
+        Index("ix_connections_requester_status", "requester_id", "status"),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    requester_id = Column(
+        Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    receiver_id = Column(
+        Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+
+    status = Column(
+        String, nullable=False, default=CONNECTION_PENDING,
+        server_default=CONNECTION_PENDING,
+    )
+    # The one-line "why I'm reaching out" shown on the advocate's request
+    # card. Not privileged case detail - that belongs in the chat, after the
+    # connection exists.
+    intro_message = Column(Text, nullable=True)
+
+    created_at = Column(DateTime, default=datetime.datetime.utcnow, index=True)
+    updated_at = Column(
+        DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow
+    )
+
+    requester = relationship("User", foreign_keys=[requester_id])
+    receiver = relationship("User", foreign_keys=[receiver_id])
+    thread = relationship(
+        "ChatThread",
+        back_populates="connection",
+        uselist=False,
+        cascade="all, delete-orphan",
+    )
+
+
+class ChatThread(Base):
+    """A private one-to-one conversation, created when a connection is
+    accepted.
+
+    One thread per connection, enforced by the unique FK. `last_message_at`
+    is denormalised so the conversation list can order by recency without
+    aggregating over chat_messages on every page load.
+    """
+
+    __tablename__ = "chat_threads"
+
+    id = Column(Integer, primary_key=True, index=True)
+    connection_id = Column(
+        Integer, ForeignKey("connections.id", ondelete="CASCADE"),
+        nullable=False, unique=True, index=True,
+    )
+
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+    last_message_at = Column(
+        DateTime, default=datetime.datetime.utcnow, index=True
+    )
+
+    connection = relationship("Connection", back_populates="thread")
+    participants = relationship(
+        "ChatParticipant", back_populates="thread", cascade="all, delete-orphan"
+    )
+    messages = relationship(
+        "ChatMessage",
+        back_populates="thread",
+        cascade="all, delete-orphan",
+        order_by="ChatMessage.id",
+    )
+
+
+class ChatParticipant(Base):
+    """Who is allowed in a thread.
+
+    Redundant with the connection's two user ids today, and that is on
+    purpose: every read and write checks membership against THIS table, so
+    the authorisation check is one indexed lookup and does not change shape
+    if a thread ever holds three people.
+    """
+
+    __tablename__ = "chat_participants"
+    __table_args__ = (
+        UniqueConstraint("thread_id", "user_id", name="uq_participant_thread_user"),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    thread_id = Column(
+        Integer, ForeignKey("chat_threads.id", ondelete="CASCADE"),
+        nullable=False, index=True,
+    )
+    user_id = Column(
+        Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    # When this participant last opened the thread. Unread counts are derived
+    # from this rather than from per-message read receipts, which would mean
+    # a write per message per reader.
+    last_read_at = Column(DateTime, nullable=True)
+
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+
+    thread = relationship("ChatThread", back_populates="participants")
+    user = relationship("User")
+
+
+class ChatMessage(Base):
+    """One message in a thread."""
+
+    __tablename__ = "chat_messages"
+    __table_args__ = (
+        # The message poll is "everything in this thread after id N", which
+        # is exactly this index.
+        Index("ix_chat_messages_thread_id_id", "thread_id", "id"),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    thread_id = Column(
+        Integer, ForeignKey("chat_threads.id", ondelete="CASCADE"),
+        nullable=False, index=True,
+    )
+    sender_id = Column(
+        Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+
+    content = Column(Text, nullable=False)
+    created_at = Column(DateTime, default=datetime.datetime.utcnow, index=True)
+    # Set when the OTHER participant reads it. Per-message so the sender can
+    # see a tick; the unread COUNT uses participant.last_read_at instead.
+    read_at = Column(DateTime, nullable=True)
+
+    thread = relationship("ChatThread", back_populates="messages")
+    sender = relationship("User")
+    # Files shared with this message. Documents point here, not the reverse,
+    # so an attachment can be dropped without touching the message.
+    attachments = relationship("Document", back_populates="message")
+
+
+# Notification types. Strings, again so a new event is not a migration.
+NOTIFY_CONNECTION_REQUEST = "connection_request"
+NOTIFY_CONNECTION_ACCEPTED = "connection_accepted"
+NOTIFY_CONNECTION_REJECTED = "connection_rejected"
+NOTIFY_NEW_MESSAGE = "new_message"
+NOTIFY_NEW_ATTACHMENT = "new_attachment"
+
+
+class Notification(Base):
+    """An event worth telling one account about.
+
+    Deliberately denormalised: title and body are written at creation time
+    rather than rendered from the related rows on read. A notification should
+    still read correctly after the thing it refers to changes or is deleted.
+    """
+
+    __tablename__ = "notifications"
+    __table_args__ = (
+        # The bell badge is "count where recipient = me and not read".
+        Index("ix_notifications_recipient_unread", "recipient_id", "is_read"),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    recipient_id = Column(
+        Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+
+    type = Column(String, nullable=False)
+    title = Column(String, nullable=False)
+    body = Column(Text, nullable=True)
+
+    # All nullable and all SET NULL on delete: a notification outliving its
+    # subject is better than a delete that fails on a foreign key.
+    related_user_id = Column(
+        Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    related_connection_id = Column(
+        Integer, ForeignKey("connections.id", ondelete="SET NULL"), nullable=True
+    )
+    related_thread_id = Column(
+        Integer, ForeignKey("chat_threads.id", ondelete="SET NULL"), nullable=True
+    )
+
+    is_read = Column(
+        Boolean, nullable=False, default=False, server_default="false"
+    )
+    created_at = Column(DateTime, default=datetime.datetime.utcnow, index=True)
+
+    recipient = relationship("User", foreign_keys=[recipient_id])
+    related_user = relationship("User", foreign_keys=[related_user_id])

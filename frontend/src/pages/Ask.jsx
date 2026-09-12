@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
-import { Link, useNavigate, useSearchParams } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useAuth, ACTIVE_CONVERSATION_KEY } from '../AuthContext';
-import ThemeToggle from '../components/ThemeToggle';
+import { AppNav, AppSidebarUser, AppTopbar } from '../components/AppShell';
 import ArgumentsResult from '../components/ArgumentsResult';
 import ArgumentsSetup from '../components/ArgumentsSetup';
 import DocTypeSelect from '../components/DocTypeSelect';
@@ -44,18 +44,6 @@ const Icon = {
          strokeLinecap="round" strokeLinejoin="round">
       <path d="M4 2.5h9l3 3v12H4z" />
       <path d="m7 10 2 2 4-4.5" />
-    </svg>
-  ),
-  menu: (
-    <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.7"
-         strokeLinecap="round">
-      <path d="M3 6h14M3 10h14M3 14h14" />
-    </svg>
-  ),
-  close: (
-    <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.7"
-         strokeLinecap="round">
-      <path d="M5 5l10 10M15 5L5 15" />
     </svg>
   ),
   trash: (
@@ -103,17 +91,9 @@ const ACCEPT =
 
 const MAX_UPLOAD_BYTES = 10 * 1024 * 1024;
 
-const ALL_MODES = [
-  { id: 'ask', label: 'Ask', icon: Icon.ask },
-  // Draft and Review are open to every account - see /draft and /review on
-  // the backend. Arguments stays advocate-only: it builds one-sided
-  // advocacy for a case rather than neutral legal information.
-  { id: 'draft', label: 'Draft', icon: Icon.draft },
-  { id: 'review', label: 'Review', icon: Icon.review },
-  { id: 'argue', label: 'Arguments', icon: Icon.argue, advocateOnly: true },
-  // Not a mode - it navigates away to the matter workspace.
-  { id: 'matters', label: 'Matters', icon: Icon.matters, advocateOnly: true, route: '/matters' },
-];
+// The tool list used to live here AND in AppShell, which is how /ask ended
+// up without the advocate-network entries that /matters had. There is now
+// one definition, in AppNav.
 
 const PLACEHOLDERS = {
   ask: 'Ask a legal question, e.g. "can my landlord evict me without notice?"',
@@ -245,7 +225,7 @@ function autoGrow(el) {
 }
 
 export default function Ask() {
-  const { token, user, logout, isAdvocate } = useAuth();
+  const { token, user, isAdvocate } = useAuth();
   const navigate = useNavigate();
   // /ask?mode=draft lets the Matters page link back into a specific tool.
   const [searchParams, setSearchParams] = useSearchParams();
@@ -387,7 +367,6 @@ export default function Ask() {
   }
 
   const started = loading || turns.length > 0 || !!error;
-  const modes = isAdvocate ? ALL_MODES : ALL_MODES.filter((m) => !m.advocateOnly);
   // The sidebar list scoped to whichever surface is open - a draft thread
   // has no business appearing under "Recents" while you're asking a
   // question, and vice versa.
@@ -481,10 +460,6 @@ export default function Ask() {
     }
   }
 
-  function handleLogout() {
-    logout();
-    navigate('/');
-  }
 
   async function handleSubmit(e) {
     e.preventDefault();
@@ -766,33 +741,10 @@ export default function Ask() {
   return (
     <div className="ask-app">
       {argueSetup}
-      <header className="ask-topbar">
-        <div className="ask-topbar-left">
-          <button
-            type="button"
-            className="sidebar-toggle"
-            onClick={() => setSidebarOpen((o) => !o)}
-            aria-label={sidebarOpen ? 'Close menu' : 'Open menu'}
-            aria-expanded={sidebarOpen}
-          >
-            {sidebarOpen ? Icon.close : Icon.menu}
-          </button>
-          <Link to="/" className="logo">
-            <span className="mark">न्या</span> Nyaya Sathi
-          </Link>
-        </div>
-        <div className="ask-topbar-right">
-          <ThemeToggle />
-          <span className="user-chip">
-            <span className="avatar">{user?.name?.[0]?.toUpperCase() || 'U'}</span>
-            {user?.name?.split(' ')[0]}
-            <span className={`role-badge ${isAdvocate ? 'advocate' : ''}`}>
-              {isAdvocate ? 'Advocate' : 'Member'}
-            </span>
-          </span>
-          <button type="button" className="btn btn-ghost" onClick={handleLogout}>Log out</button>
-        </div>
-      </header>
+      <AppTopbar
+        sidebarOpen={sidebarOpen}
+        onToggleSidebar={() => setSidebarOpen((o) => !o)}
+      />
 
       <main className="ask-shell">
       <div className="ask-layout">
@@ -801,21 +753,7 @@ export default function Ask() {
             <span className="plus-ic">+</span> New question
           </button>
 
-          <nav className="ask-nav" role="tablist">
-            {modes.map((m) => (
-              <button
-                key={m.id}
-                type="button"
-                role="tab"
-                aria-selected={mode === m.id}
-                className={`ask-nav-item ${mode === m.id ? 'active' : ''}`}
-                onClick={() => (m.route ? navigate(m.route) : switchMode(m.id))}
-              >
-                <span className="ask-nav-icon">{m.icon}</span>
-                {m.label}
-              </button>
-            ))}
-          </nav>
+          <AppNav active={mode} onWorkspace={switchMode} />
 
           <div className="ask-sidebar-divider" />
 
@@ -850,18 +788,7 @@ export default function Ask() {
             ))}
           </div>
 
-          {user && (
-            <div className="ask-sidebar-user">
-              <span className="avatar">{user.name?.[0]?.toUpperCase() || 'U'}</span>
-              <div className="ask-sidebar-user-text">
-                <div className="name">{user.name}</div>
-                <div className="sub">
-                  {isAdvocate ? 'Advocate' : 'Member'}
-                  {user.state ? ` · ${user.state}` : ''}
-                </div>
-              </div>
-            </div>
-          )}
+          <AppSidebarUser />
         </aside>
 
         <div className="ask-main">
@@ -909,7 +836,7 @@ export default function Ask() {
                   {docSelect}
                   <span className="actions-spacer" />
                   <button type="submit" className="send-btn" disabled={!canSubmit}>
-                    {loading ? <span className="spinner" /> : '\u2191'}
+                    {loading ? <span className="spinner" /> : 'Send'}
                   </button>
                 </div>
               </form>
@@ -1011,7 +938,7 @@ export default function Ask() {
                       placeholder={PLACEHOLDERS[mode]}
                     />
                     <button className="dock-send" type="submit" disabled={!canSubmit}>
-                      {loading ? <span className="spinner" /> : '\u2191'}
+                      {loading ? <span className="spinner" /> : 'Send'}
                     </button>
                   </div>
                 </div>

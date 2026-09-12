@@ -33,6 +33,7 @@ from . import (
 )
 from .auth import ensure_profile, get_current_user, require_advocate
 from .matters_api import router as matters_router
+from .network_api import router as network_router
 from .config import settings
 from .database import Base, SessionLocal, engine, get_db
 from fastapi.responses import StreamingResponse
@@ -90,6 +91,10 @@ async def startup_checks():
 
 
 app.include_router(matters_router)
+# Advocate discovery, connection requests, private chat and notifications.
+# Everything it owns is under /network, so it cannot collide with the AI
+# surface's /conversations or /documents routes.
+app.include_router(network_router)
 
 
 @app.get("/health")

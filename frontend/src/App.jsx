@@ -11,19 +11,33 @@ import ResetPassword from './pages/ResetPassword';
 import Ask from './pages/Ask';
 import Matters from './pages/Matters';
 import MatterDetail from './pages/MatterDetail';
+import Advocates from './pages/Advocates';
+import AdvocateProfile from './pages/AdvocateProfile';
+import Network from './pages/Network';
+import Messages from './pages/Messages';
+import Profile from './pages/Profile';
+
+// Routes that render their own self-contained app shell (own top bar, own
+// nav rail, no marketing nav and no footer). Kept as a list rather than a
+// chain of startsWith calls, because it now has eight entries and a missing
+// one shows up as a stray marketing header above the app.
+const SHELL_PREFIXES = [
+  '/ask',
+  '/matters',
+  '/advocates',
+  '/network',
+  '/messages',
+  '/profile',
+];
 
 export default function App() {
   const { pathname } = useLocation();
-  // The Ask page is its own self-contained app shell (own top bar, no
-  // marketing nav, no footer) rather than a marketing page, so the site
-  // chrome is skipped there.
-  // Matters uses the same self-contained shell as Ask.
-  const isAskShell = pathname.startsWith('/ask') || pathname.startsWith('/matters');
+  const isAppShell = SHELL_PREFIXES.some((p) => pathname.startsWith(p));
 
   return (
     <>
       <ScrollToHash />
-      {!isAskShell && <Navbar />}
+      {!isAppShell && <Navbar />}
       <Routes>
         <Route path="/" element={<Landing />} />
         <Route path="/login" element={<Login />} />
@@ -54,8 +68,60 @@ export default function App() {
             </ProtectedRoute>
           }
         />
+
+        {/* --- advocate network --- */}
+        <Route
+          path="/advocates"
+          element={
+            <ProtectedRoute>
+              <Advocates />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/advocates/:id"
+          element={
+            <ProtectedRoute>
+              <AdvocateProfile />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/network"
+          element={
+            <ProtectedRoute>
+              <Network />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/messages"
+          element={
+            <ProtectedRoute>
+              <Messages />
+            </ProtectedRoute>
+          }
+        />
+        {/* Same page; the id just decides which conversation is open, so the
+            component is not remounted when switching threads. */}
+        <Route
+          path="/messages/:threadId"
+          element={
+            <ProtectedRoute>
+              <Messages />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/profile"
+          element={
+            <ProtectedRoute>
+              <Profile />
+            </ProtectedRoute>
+          }
+        />
       </Routes>
-      {!isAskShell && <Footer />}
+      {!isAppShell && <Footer />}
     </>
   );
 }
