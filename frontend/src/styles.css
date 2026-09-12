@@ -462,9 +462,10 @@ footer.site-footer{border-top:1px solid var(--line); padding:56px 0 34px; margin
 }
 .attach-btn:disabled{opacity:.5; cursor:not-allowed;}
 .send-btn{
-  width:34px; height:34px; border-radius:50%; border:0;
-  background:var(--accent); color:var(--on-accent); font-size:16px; font-weight:800;
-  cursor:pointer; display:flex; align-items:center; justify-content:center;
+  min-height:34px; padding:0 18px; border-radius:12px; border:0;
+  background:var(--accent); color:var(--on-accent);
+  font-family:inherit; font-size:13.5px; font-weight:700; letter-spacing:.01em;
+  cursor:pointer; display:flex; align-items:center; justify-content:center; gap:7px;
   transition:background .15s, opacity .15s;
 }
 .send-btn:hover{background:var(--accent-dark);}
@@ -516,8 +517,13 @@ footer.site-footer{border-top:1px solid var(--line); padding:56px 0 34px; margin
    attached file) stacks above a single pill so the dock stays one line tall
    until the user actually types. */
 .ask-form-dock{
-  flex-shrink:0; border-top:1px solid var(--line); background:var(--surface);
-  padding:10px 28px 14px;
+  flex-shrink:0;
+  /* Deliberately no border-top and no background. The rounded box below IS
+     the composer; wrapping it in a bordered --surface strip made it read as
+     a box inside a box. Used by Ask, Draft, Review, Arguments AND the
+     Messages conversation - one control, five surfaces. */
+  background:transparent;
+  padding:12px 28px 18px;
 }
 .ask-dock-row{
   display:flex; flex-direction:column; align-items:stretch; gap:0;
@@ -527,9 +533,12 @@ footer.site-footer{border-top:1px solid var(--line); padding:56px 0 34px; margin
 
 .dock-box{
   display:flex; align-items:flex-end; gap:8px; width:100%;
-  padding:6px 6px 6px 10px;
-  border:1px solid var(--line); border-radius:24px; background:var(--bg);
-  transition:border-color .15s;
+  padding:6px 6px 6px 14px;
+  border:1px solid var(--line); border-radius:var(--radius-m);
+  /* --surface, not --bg: with the strip above removed, the page behind this
+     IS --bg, so a --bg box would be invisible apart from its hairline. */
+  background:var(--surface); box-shadow:var(--shadow-soft);
+  transition:border-color .15s, box-shadow .15s;
 }
 .dock-box:focus-within{border-color:var(--accent);}
 .dock-input{
@@ -540,10 +549,11 @@ footer.site-footer{border-top:1px solid var(--line); padding:56px 0 34px; margin
 }
 .dock-input::placeholder{color:var(--ink-faint);}
 .dock-send{
-  flex-shrink:0; width:34px; height:34px; border-radius:50%; border:0;
-  display:flex; align-items:center; justify-content:center;
+  flex-shrink:0; min-height:34px; padding:0 18px; border-radius:12px; border:0;
+  display:flex; align-items:center; justify-content:center; gap:7px;
   background:var(--accent); color:var(--on-accent);
-  font-size:16px; font-weight:800; cursor:pointer;
+  font-family:inherit; font-size:13.5px; font-weight:700; letter-spacing:.01em;
+  cursor:pointer;
   transition:background .15s, opacity .15s;
 }
 .dock-send:hover:not(:disabled){background:var(--accent-dark);}

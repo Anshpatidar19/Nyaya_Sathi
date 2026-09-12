@@ -36,6 +36,17 @@ class Settings(BaseSettings):
     site_url: str = os.getenv("SITE_URL", "http://localhost:5173")  # service_role key
     supabase_bucket: str = os.getenv("SUPABASE_BUCKET", "user-documents")
 
+    # Profile pictures. A SEPARATE, PUBLIC bucket - on purpose.
+    #
+    # `supabase_bucket` above is private and every download goes through a
+    # signed URL, which is right for an FIR copy or a property deed. An
+    # avatar is different: it is shown to every user who searches the
+    # directory, and signing one URL per row would add ~30 round trips to
+    # Supabase for a single page of search results. Keeping them in their own
+    # public bucket means the legal documents bucket stays private and
+    # nothing in it is ever served by a plain URL.
+    supabase_avatar_bucket: str = os.getenv("SUPABASE_AVATAR_BUCKET", "avatars")
+
     # --- Vector retrieval --------------------------------------------------
     # Pinecone holds embeddings of the bare acts. Everything here is optional:
     # with no key set the dense fallback stays off and retrieval is BM25 only,
@@ -76,6 +87,16 @@ class Settings(BaseSettings):
     # one common word and getting the answer wrong.
     dense_min_score: float = float(os.getenv("DENSE_MIN_SCORE", "8.0"))
     dense_min_coverage: float = float(os.getenv("DENSE_MIN_COVERAGE", "0.34"))
+
+    # --- Demo seed ---------------------------------------------------------
+    # Password given to every seeded demo account. Only ever used by
+    # `python -m app.seed_demo`; nothing at runtime reads it. Override it in
+    # .env if you would rather not have the value sitting in the repo.
+    demo_password: str = os.getenv("DEMO_PASSWORD", "DemoPass@2026")
+    # Every seeded account's email is at this domain. example.com is
+    # IANA-reserved and undeliverable, so a stray send can never reach a real
+    # inbox, and it doubles as the marker for "this is not a real account".
+    demo_email_domain: str = os.getenv("DEMO_EMAIL_DOMAIN", "example.com")
 
     class Config:
         env_file = ".env"
