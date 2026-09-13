@@ -1,7 +1,11 @@
+import asyncio
 import datetime
 import json
 import logging
 import re
+import time
+from collections import OrderedDict
+from typing import Any
 
 import httpx
 from fastapi import (
@@ -64,11 +68,89 @@ def _sse(obj: dict) -> str:
     return f"data: {json.dumps(obj, default=str)}\n\n"
 
 
+# Paths whose timing is noise. The badge poller hits /network/unread on a
+# timer from every mounted component, and logging each one buries the
+# requests worth reading.
+_QUIET_PATHS = {"/network/unread", "/network/me", "/health"}
+
+
+@app.middleware("http")
+async def log_request_time(request, call_next):
+    """Wall-clock per request, measured outside the handler.
+
+    This exists because of a specific confusion: the TIMING line in
+    reasoning.py starts when the handler body starts, which is AFTER auth,
+    the conversation lookup and the request gate, and it stops when the
+    generator finishes. So "total=13.41s" and a stopwatch reading 16s are
+    both correct and the difference is invisible. This closes it - subtract
+    TIMING's total from this number and the remainder is everything around
+    the answer rather than in it.
+    """
+    start = time.perf_counter()
+    response = await call_next(request)
+    if request.url.path not in _QUIET_PATHS:
+        logger.info(
+            "REQUEST %s %s -> %s in %.2fs",
+            request.method, request.url.path, response.status_code,
+            time.perf_counter() - start,
+        )
+    return response
+
+
+# Keep-alive pool for downloading stored documents out of Supabase Storage.
+# A fresh AsyncClient per download repeats the TLS handshake to the storage
+# host every time, and a document is re-read on every question asked about it.
+_blob_client: httpx.AsyncClient | None = None
+
+
+def _get_blob_client() -> httpx.AsyncClient:
+    global _blob_client
+    if _blob_client is None or _blob_client.is_closed:
+        _blob_client = httpx.AsyncClient(
+            timeout=60.0,
+            limits=httpx.Limits(max_keepalive_connections=10, max_connections=20),
+        )
+    return _blob_client
+
+
+# --- Uploaded document caches ---------------------------------------------
+# Both are keyed on storage_path, which is safe because a stored object is
+# immutable: /documents writes a new path for every upload and nothing ever
+# rewrites one in place. A deleted document's entry is dead weight at worst,
+# and it is evicted by size.
+#
+# What this removes from the critical path of a document question: a signed
+# URL round trip to Supabase, the download, PDF/DOCX text extraction, and a
+# whole Gemini call for the scope classifier - all of it repeated, in full,
+# on every follow-up question about the same file.
+_DOC_CACHE_MAX = 32
+_doc_text_cache: "OrderedDict[str, str]" = OrderedDict()
+_doc_scope_ok: "OrderedDict[str, bool]" = OrderedDict()
+
+
+def _cache_get(cache: "OrderedDict[str, Any]", key: str):
+    if key in cache:
+        cache.move_to_end(key)
+        return cache[key]
+    return None
+
+
+def _cache_put(cache: "OrderedDict[str, Any]", key: str, value) -> None:
+    cache[key] = value
+    cache.move_to_end(key)
+    while len(cache) > _DOC_CACHE_MAX:
+        cache.popitem(last=False)
+
+
 @app.on_event("shutdown")
 async def shutdown_clients():
     """Close the keep-alive pools so reload and restart are clean."""
     await gemini.close_client()
     await kanoon.close_client()
+    global _blob_client
+    if _blob_client is not None and not _blob_client.is_closed:
+        await _blob_client.aclose()
+    _blob_client = None
 
 
 @app.on_event("startup")
@@ -88,6 +170,22 @@ async def startup_checks():
         logger.info("Supabase Storage bucket ready: %s", storage.settings.supabase_bucket)
     except storage.StorageError as exc:
         logger.warning("Supabase Storage not configured: %s", exc)
+
+    # Warm the dense-retrieval path so the first user to ask a question does
+    # not pay for it. Pinecone's list_indexes / describe_index / build-a-host-
+    # specific-client sequence is three control-plane round trips, and it was
+    # landing inside somebody's retrieve() as a one-off couple of seconds that
+    # looked like slow retrieval. Free, unlike an embedding call, which is why
+    # only this half is warmed - the first real question still pays one
+    # embedding round trip.
+    if settings.dense_fallback:
+        try:
+            from . import vectorstore
+
+            await asyncio.to_thread(vectorstore.ensure_index)
+            logger.info("Pinecone index handle warmed: %s", vectorstore.INDEX_NAME)
+        except Exception as exc:
+            logger.warning("Could not warm the Pinecone index (%s)", exc)
 
 
 app.include_router(matters_router)
@@ -251,11 +349,17 @@ async def _load_document(
     if not doc:
         raise HTTPException(status_code=404, detail="Document not found.")
 
+    # Same file, same bytes, same extracted text. Asking a second question
+    # about an uploaded notice re-downloaded it and re-ran PDF extraction for
+    # a result that could not have changed.
+    cached = _cache_get(_doc_text_cache, doc.storage_path)
+    if cached is not None:
+        return doc, cached
+
     try:
         url = await storage.signed_url(doc.storage_path, expires_in=120)
-        async with httpx.AsyncClient(timeout=60.0) as client:
-            blob = await client.get(url)
-            blob.raise_for_status()
+        blob = await _get_blob_client().get(url)
+        blob.raise_for_status()
         text = drafting.extract_text(blob.content, doc.content_type, doc.filename)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
@@ -265,18 +369,32 @@ async def _load_document(
         logger.exception("Could not read stored document %s: %s", doc.id, exc)
         raise HTTPException(status_code=503, detail="Could not read that document.")
 
+    _cache_put(_doc_text_cache, doc.storage_path, text)
     return doc, text
 
 
-async def _gate_document(text: str, filename: str) -> None:
+async def _gate_document(text: str, filename: str, cache_key: str | None = None) -> None:
     """Refuse anything outside this platform's subject matter.
 
     422 rather than 400: the request was well-formed, the content just isn't
     something a legal-information system should be explaining.
+
+    The verdict is remembered per stored object. The classifier is a Gemini
+    call on the critical path, and re-running it on the fifth question about
+    the same rent agreement cannot reach a different answer - the text it
+    classifies is byte-identical. A rejection is deliberately NOT cached: the
+    call is only paid once per rejected document anyway, since the request
+    fails before anything else happens.
     """
+    if cache_key and _cache_get(_doc_scope_ok, cache_key):
+        return
+
     verdict = await doc_scope.check(text, filename)
     if not verdict.in_scope:
         raise HTTPException(status_code=422, detail=verdict.reason)
+
+    if cache_key:
+        _cache_put(_doc_scope_ok, cache_key, True)
 
 
 def _gate_request(text: str, *, allow_short: bool = False) -> None:
@@ -366,7 +484,7 @@ async def ask(
     document = None
     if payload.document_id:
         doc, text = await _load_document(db, payload.document_id, current_user)
-        await _gate_document(text, doc.filename)
+        await _gate_document(text, doc.filename, doc.storage_path)
         document = {"filename": doc.filename, "text": text}
         # "Explain this" with a file attached is a complete request; give the
         # model a real instruction rather than an empty string.
@@ -377,10 +495,19 @@ async def ask(
         raise HTTPException(status_code=400, detail="Ask a question, or attach a document.")
 
     title_seed = question if not document else f"{document['filename']} — {question}"
-    convo = _get_or_create_conversation(
-        db, current_user, payload.conversation_id, title_seed, "ask", payload.matter_id
+    # to_thread for the same reason as the streamed write below: these are
+    # blocking psycopg2 round trips to a remote database inside an async
+    # handler, and inline they stall every other request in the process.
+    # Sequential, never concurrent, so the request-scoped Session is only
+    # ever touched by one thread at a time.
+    convo = await asyncio.to_thread(
+        _get_or_create_conversation,
+        db, current_user, payload.conversation_id, title_seed, "ask", payload.matter_id,
     )
-    history = _thread_history(db, convo.id) if payload.conversation_id else []
+    history = (
+        await asyncio.to_thread(_thread_history, db, convo.id)
+        if payload.conversation_id else []
+    )
 
     answer = await reasoning.answer_question(
         question, payload.state or current_user.state, history, document
@@ -437,7 +564,7 @@ async def ask_stream(
     document = None
     if payload.document_id:
         doc, text = await _load_document(db, payload.document_id, current_user)
-        await _gate_document(text, doc.filename)
+        await _gate_document(text, doc.filename, doc.storage_path)
         document = {"filename": doc.filename, "text": text}
         if not question:
             question = "Explain this document and what it means for me."
@@ -446,10 +573,14 @@ async def ask_stream(
         raise HTTPException(status_code=400, detail="Ask a question, or attach a document.")
 
     title_seed = question if not document else f"{document['filename']} — {question}"
-    convo = _get_or_create_conversation(
-        db, current_user, payload.conversation_id, title_seed, "ask", payload.matter_id
+    convo = await asyncio.to_thread(
+        _get_or_create_conversation,
+        db, current_user, payload.conversation_id, title_seed, "ask", payload.matter_id,
     )
-    history = _thread_history(db, convo.id) if payload.conversation_id else []
+    history = (
+        await asyncio.to_thread(_thread_history, db, convo.id)
+        if payload.conversation_id else []
+    )
     state = payload.state or current_user.state
     convo_id = convo.id
     # Captured before the generator starts. FastAPI closes the request-scoped
@@ -458,39 +589,13 @@ async def ask_stream(
     # DetachedInstanceError, so pull out the plain values now.
     user_id = current_user.id
 
-    async def events():
-        answer = None
-        try:
-            async for kind, value in reasoning.answer_question_stream(
-                question, state, history, document
-            ):
-                if kind == "delta":
-                    yield _sse({"type": "delta", "text": value})
-                elif kind == "revised":
-                    yield _sse({"type": "revised", "body": value})
-                elif kind == "error":
-                    yield _sse({"type": "error", "message": value})
-                    return
-                elif kind == "done":
-                    answer = value
-        except Exception as exc:
-            logger.exception("Streaming answer failed: %s", exc)
-            yield _sse({"type": "error", "message": "The answer could not be completed."})
-            return
+    def _save(answer) -> int | None:
+        """Persist the finished turn. Returns the QueryLog id, or None.
 
-        if answer is None:
-            yield _sse({"type": "error", "message": "The answer could not be completed."})
-            return
-
-        if document:
-            answer.document_name = document["filename"]
-
-        # Written only once the validator has passed on it, exactly as in the
-        # buffered path - a streamed answer and a reloaded one must match.
-        log_id = None
-        # A fresh session, for the same reason: `db` belongs to a request that
-        # has already returned. Opened late and closed straight after, so it
-        # holds a connection only for the write itself.
+        A fresh session: `db` belongs to a request that has already returned
+        by the time the generator runs. Opened late and closed straight after,
+        so it holds a connection only for the write itself.
+        """
         write_db = SessionLocal()
         try:
             log = models.QueryLog(
@@ -508,19 +613,101 @@ async def ask_stream(
                 models.Conversation.id == convo_id
             ).update({"updated_at": datetime.datetime.utcnow()})
             write_db.commit()
-            log_id = log.id
+            return log.id
         except Exception as exc:
             write_db.rollback()
             logger.exception("Could not save streamed answer: %s", exc)
+            return None
         finally:
             write_db.close()
 
-        final = answer.model_dump()
-        final["conversation_id"] = convo_id
-        # None when the save failed, which the client reads as "this answer
-        # can't be translated" rather than crashing on a missing id.
-        final["query_log_id"] = log_id
-        yield _sse({"type": "done", "answer": final})
+    def _apply_revision(log_id: int | None, body: str) -> None:
+        """Correct a stored turn after the validator replaced its body.
+
+        The validator now runs after the payload is sent, so on the rare
+        rejection the row already holds the draft. A reloaded thread has to
+        show what the reader ended up seeing, not what was sent first.
+        """
+        if log_id is None:
+            return
+        write_db = SessionLocal()
+        try:
+            log = write_db.get(models.QueryLog, log_id)
+            if log is None:
+                return
+            log.answer_body = body
+            try:
+                payload_obj = json.loads(log.payload_json or "{}")
+                payload_obj["body"] = body
+                log.payload_json = json.dumps(payload_obj, default=str)
+            except (TypeError, ValueError):
+                pass
+            write_db.commit()
+        except Exception as exc:
+            write_db.rollback()
+            logger.exception("Could not apply the validator's revision: %s", exc)
+        finally:
+            write_db.close()
+
+    async def events():
+        sent_done = False
+        log_id = None
+        try:
+            async for kind, value in reasoning.answer_question_stream(
+                question, state, history, document
+            ):
+                if kind == "delta":
+                    yield _sse({"type": "delta", "text": value})
+
+                elif kind == "revised":
+                    # This can now arrive either side of "done", depending on
+                    # reasoning.STREAM_DONE_BEFORE_VALIDATION. After it, the
+                    # stored row needs correcting as well as the screen.
+                    if sent_done:
+                        await asyncio.to_thread(_apply_revision, log_id, value)
+                    yield _sse({"type": "revised", "body": value})
+
+                elif kind == "error":
+                    yield _sse({"type": "error", "message": value})
+                    return
+
+                elif kind == "done":
+                    answer = value
+                    if document:
+                        answer.document_name = document["filename"]
+
+                    # Saved and sent inside the loop rather than after it, so
+                    # the citations reach the reader the moment they exist
+                    # instead of waiting on whatever the generator does next.
+                    #
+                    # In a thread, and this matters more than it looks. These
+                    # are synchronous psycopg2 calls to a REMOTE Postgres, and
+                    # this generator is async - so run inline they block the
+                    # whole event loop for the duration of the round trip.
+                    # The validator's HTTP response cannot even be read while
+                    # that happens, which is why a verdict call returning 17
+                    # output tokens was being measured at 4.6 seconds.
+                    log_id = await asyncio.to_thread(_save, answer)
+
+                    final = answer.model_dump()
+                    final["conversation_id"] = convo_id
+                    # None when the save failed, which the client reads as
+                    # "this answer can't be translated" rather than crashing
+                    # on a missing id.
+                    final["query_log_id"] = log_id
+                    sent_done = True
+                    yield _sse({"type": "done", "answer": final})
+        except Exception as exc:
+            logger.exception("Streaming answer failed: %s", exc)
+            if not sent_done:
+                yield _sse({
+                    "type": "error",
+                    "message": "The answer could not be completed.",
+                })
+            return
+
+        if not sent_done:
+            yield _sse({"type": "error", "message": "The answer could not be completed."})
 
     return StreamingResponse(
         events(),
@@ -1063,7 +1250,7 @@ async def generate_arguments(
 
     if payload.document_id:
         doc, doc_text = await _load_document(db, payload.document_id, current_user)
-        await _gate_document(doc_text, doc.filename)
+        await _gate_document(doc_text, doc.filename, doc.storage_path)
         document_name = doc.filename
         # Typed facts lead - they are the advocate's framing of the matter,
         # and the document is the raw material behind it.

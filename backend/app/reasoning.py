@@ -16,6 +16,7 @@ import asyncio
 import logging
 import re
 import time
+from dataclasses import dataclass, field
 from typing import Any, AsyncIterator, Dict, List, Optional, Tuple
 
 from . import gemini, kanoon, routing, statutes, validity
@@ -27,6 +28,56 @@ logger = logging.getLogger(__name__)
 TOP_K = 3          # case-law results considered from Kanoon
 TOP_STATUTES = 3   # bare-act sections retrieved locally
 DOC_CHARS = 6000   # cap on grounding text per judgment (fallback path only)
+
+# Cap on the query-matched fragment kept per judgment.
+#
+# This one is worth understanding, because it was uncapped and it is the
+# single largest lever on time-to-first-word. /docfragment/ returns *every*
+# passage that matched, concatenated - routinely 15,000-30,000 characters for
+# a long judgment. Three of those is ~20k tokens of prompt that the model has
+# to read before it can emit a single character of answer, and then the
+# validator reads them again. The passages are already ranked by the match, so
+# the tail is the weakest material in the response: cutting it costs almost
+# nothing in grounding and removes seconds of prefill.
+FRAGMENT_CHARS = 4000
+
+# A slow judgment must not set the latency for the answer. Fragments are
+# fetched concurrently, so this is a per-judgment deadline: past it, the
+# search headline (already paid for, already query-matched) stands in and the
+# source stays in play rather than the whole answer waiting.
+#
+# 3.5s, not 6: measured retrieve times of 9s on case-law questions were mostly
+# this step, and a fragment call that hasn't answered in three and a half
+# seconds is not usually about to.
+HYDRATE_TIMEOUT = 3.5
+
+# Streaming only: send the finished payload - citations, next steps, grounding
+# - as soon as synthesis ends, and run the validator after it, emitting a
+# "revised" frame if it rejects the draft.
+#
+# This does not weaken the check. The streaming path has ALREADY shown the
+# reader every word of the unvalidated draft by the time the validator runs,
+# so holding the citations back protects nothing; it just adds the validator's
+# round trip to the wait on every answer, including the overwhelming majority
+# that pass. The validator still runs, still blocks the stored answer, and
+# still replaces the body visibly when it objects.
+#
+# Set to False to go back to validating before anything is sent.
+STREAM_DONE_BEFORE_VALIDATION = True
+
+
+@dataclass
+class Retrieved:
+    """What retrieval produced, kept together so nothing is recomputed.
+
+    `statute_hits` used to be thrown away and then re-derived in _finalise()
+    by calling statutes.search() a second time - a second full BM25 pass over
+    the corpus, and with the dense fallback enabled a second embedding call
+    and a second pair of Pinecone lookups, all to answer a question that had
+    already been answered.
+    """
+    sources: List[Dict[str, Any]] = field(default_factory=list)
+    statute_hits: List[Dict[str, Any]] = field(default_factory=list)
 
 # ---------------------------------------------------------------------------
 # Agent 0 - Fast path for greetings and small talk
@@ -253,7 +304,7 @@ async def _hydrate(results: List[Dict[str, Any]], query: str) -> List[Dict[str, 
             try:
                 frag = await kanoon.fragment(docid, query)
                 if frag:
-                    text = frag
+                    text = frag[:FRAGMENT_CHARS]
                 # An empty fragment is NOT a reason to fetch the full document:
                 # that would mean two billed calls per judgment. The search
                 # headline below is already paid for and is enough to keep the
@@ -273,30 +324,43 @@ async def _hydrate(results: List[Dict[str, Any]], query: str) -> List[Dict[str, 
 
         return {**r, "text": text, "headline": headline}
 
+    async def _one_guarded(r: Dict[str, Any]) -> Dict[str, Any]:
+        """_one() with a deadline. Past it, fall back to the headline.
+
+        Concurrency stops the fetches queueing behind each other, but it does
+        not help when one judgment is simply slow - gather() waits for the
+        last one. The headline is a query-matched snippet the search call
+        already paid for, so timing out degrades one source rather than the
+        whole answer.
+        """
+        try:
+            return await asyncio.wait_for(_one(r), timeout=HYDRATE_TIMEOUT)
+        except asyncio.TimeoutError:
+            headline = kanoon.strip_html(r.get("snippet") or "")
+            logger.warning(
+                "Kanoon text fetch for %s exceeded %.1fs; using the headline",
+                r.get("docid"), HYDRATE_TIMEOUT,
+            )
+            return {**r, "text": headline, "headline": headline}
+
     # Fetched together, not one after another. These are independent HTTP
     # calls to the same host - waiting for each in turn made the slowest
     # judgment set the latency for all of them. Same number of billed calls,
     # a third of the wall time.
     hydrated: List[Dict[str, Any]] = list(
-        await asyncio.gather(*(_one(r) for r in results))
+        await asyncio.gather(*(_one_guarded(r) for r in results))
     )
     return hydrated
 
 
-async def retrieve(
-    question: str,
-    state: Optional[str],
-    history: Optional[List[Dict[str, str]]] = None,
-    document: Optional[Dict[str, str]] = None,
-) -> List[Dict[str, Any]]:
-    """Bare acts first, then case law. Either source alone is enough to answer."""
-    # With a document attached, "explain this" carries no retrievable terms.
-    # The provisions the document itself names are what to look up.
-    doc_terms = document_query(document["text"]) if document and document.get("text") else ""
-    retrieval_text = f"{question} {doc_terms}".strip() if doc_terms else question
+def _local_sources(
+    retrieval_text: str,
+    overview: Optional[Dict[str, Any]],
+) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
+    """The local half of retrieval. Synchronous on purpose - see retrieve().
 
-    # Act-level question ("tell me about BNS") - BM25 can't help, answer directly.
-    overview = statutes.act_overview(retrieval_text)
+    Returns (sources, statute_hits).
+    """
     statute_hits = [] if overview else statutes.search(retrieval_text, limit=TOP_STATUTES)
 
     if overview:
@@ -308,33 +372,109 @@ async def retrieve(
     # so every downstream consumer - synthesis, citation cards, the grounding
     # assessment - sees the same status.
     validity.annotate(sources)
+    return sources, statute_hits
 
-    decision = routing.decide(retrieval_text, statute_hits, overview)
 
-    if not decision.call_kanoon:
-        logger.info("Kanoon skipped (%s) - saved ~%d calls", decision.reason, 1 + 2)
-        return sources
+async def retrieve(
+    question: str,
+    state: Optional[str],
+    history: Optional[List[Dict[str, str]]] = None,
+    document: Optional[Dict[str, str]] = None,
+) -> Retrieved:
+    """Bare acts first, then case law. Either source alone is enough to answer.
 
-    logger.info("Kanoon called (%s)", decision.reason)
+    Two things about the shape of this function are about latency rather than
+    retrieval quality:
+
+    *The local pass runs in a worker thread.* statutes.search() is pure-Python
+    BM25 over the whole corpus, and when the dense fallback fires it also makes
+    a blocking embedding request and two Pinecone lookups - with retries that
+    call time.sleep(). All of that on the event loop stalls every other request
+    in the process, including the one streaming an answer to someone else. It
+    is the same work, just not in the way.
+
+    *The Kanoon search starts before the local pass finishes*, whenever the
+    routing decision can be read off the wording alone (see routing.prejudge).
+    They query unrelated systems; running them in sequence meant paying for
+    both in series for no reason. Billed calls are unchanged - the gate still
+    decides, and a question routed away from Kanoon never starts the search.
+    """
+    # With a document attached, "explain this" carries no retrievable terms.
+    # The provisions the document itself names are what to look up.
+    doc_terms = document_query(document["text"]) if document and document.get("text") else ""
+    retrieval_text = f"{question} {doc_terms}".strip() if doc_terms else question
+
+    # Act-level question ("tell me about BNS") - BM25 can't help, answer
+    # directly. Pure regex against a dictionary, so it stays inline.
+    overview = statutes.act_overview(retrieval_text)
+
+    local_task = asyncio.create_task(
+        asyncio.to_thread(_local_sources, retrieval_text, overview)
+    )
 
     query = refine_query(retrieval_text, None)   # state goes in the court filter now
+    early = routing.prejudge(retrieval_text, overview)
+    search_task = None
+    if early is not None and early.call_kanoon:
+        search_task = asyncio.create_task(kanoon.search(query, state=state))
+
+    t_start = time.perf_counter()
     try:
-        results = await kanoon.search(query, state=state)
+        sources, statute_hits = await local_task
+    except Exception:
+        if search_task is not None:
+            search_task.cancel()
+        raise
+    t_local = time.perf_counter() - t_start
+
+    decision = early or routing.decide(retrieval_text, statute_hits, overview)
+    found = Retrieved(sources=sources, statute_hits=statute_hits)
+
+    if not decision.call_kanoon:
+        # Only reachable with a live search_task if prejudge and decide
+        # disagreed, which they cannot - but cancelling is free and means a
+        # future edit to either can't leak a billed call.
+        if search_task is not None:
+            search_task.cancel()
+        logger.info(
+            "RETRIEVE local=%.2fs kanoon=skipped (%s) - saved ~%d calls",
+            t_local, decision.reason, 1 + 2,
+        )
+        return found
+
+    t_search = time.perf_counter()
+    try:
+        if search_task is None:
+            results = await kanoon.search(query, state=state)
+        else:
+            results = await search_task
     except Exception as exc:
         logger.warning("Kanoon search failed: %s", exc)
-        return sources
+        return found
+    t_search = time.perf_counter() - t_search
 
     if not results:
         # An empty result set can mean a dry balance - the API returns nothing
         # rather than erroring when credit runs out.
         logger.warning("Kanoon returned no results for %r - check API balance", query)
-        return sources
+        return found
 
     # Spend document fetches on the judgments most worth reading.
+    t_hydrate = time.perf_counter()
     ranked = kanoon.rank_by_citations(results[:TOP_K * 2], top=decision.doc_fetches)
-    sources.extend(await _hydrate(ranked, query))
+    found.sources.extend(await _hydrate(ranked, query))
+    t_hydrate = time.perf_counter() - t_hydrate
 
-    return sources
+    # Split out because the totals alone don't say which half to work on, and
+    # "retrieve=9.25s" was three very different things added together. Note
+    # that `search` reads as ~0 when it overlapped the local pass - that is
+    # the overlap working, not the call being free.
+    logger.info(
+        "RETRIEVE local=%.2fs search=%.2fs hydrate=%.2fs (%s, %d judgments)",
+        t_local, t_search, t_hydrate, decision.reason, len(ranked),
+    )
+
+    return found
 
 
 # ---------------------------------------------------------------------------
@@ -366,7 +506,8 @@ async def run_live_pipeline(
             )
 
     t0 = time.perf_counter()
-    sources = await retrieve(question, state, history, document)
+    found = await retrieve(question, state, history, document)
+    sources = found.sources
     t_retrieve = time.perf_counter() - t0
 
     # With a document attached, an empty source list is survivable: the
@@ -397,9 +538,12 @@ async def run_live_pipeline(
     # document instead. Running it here flags correct answers as unsupported.
     t2 = time.perf_counter()
     try:
+        overview_only = bool(sources) and all(
+            s.get("kind") == "overview" for s in sources
+        )
         verdict = (
             {"grounded": True, "issues": [], "revised_body": ""}
-            if document
+            if (document or overview_only)
             else await gemini.validate(question, draft, sources, state)
         )
         t_validate = time.perf_counter() - t2
@@ -426,14 +570,14 @@ async def run_live_pipeline(
     except Exception as exc:
         logger.warning("Validator step failed, returning unvalidated draft: %s", exc)
 
-    return _finalise(question, body, draft, sources)
+    return _finalise(question, body, draft, found)
 
 
 def _finalise(
     question: str,
     body: str,
     draft: Dict[str, Any],
-    sources: List[Dict[str, Any]],
+    found: Retrieved,
 ) -> AskResponse:
     """Citations, next steps and the grounding badge.
 
@@ -441,6 +585,8 @@ def _finalise(
     the finished answer, which is why the streaming endpoint can only send it
     after the last character has arrived.
     """
+    sources = found.sources
+
     # --- Citations: the sources synthesis actually used ---
     used = draft["used_sources"]
     chosen = [sources[i - 1] for i in used if 1 <= i <= len(sources)] or sources
@@ -465,7 +611,13 @@ def _finalise(
     ]
 
     # Statutes outside the ingested acts that matter here (e.g. the DV Act).
-    for law in statutes.related_laws(statutes.search(question, limit=TOP_STATUTES)):
+    #
+    # This used to call statutes.search() again, from scratch, on every single
+    # answer - a full second BM25 pass, plus a second embedding call and two
+    # more Pinecone lookups whenever the dense fallback was enabled, purely to
+    # re-derive hits retrieval had already computed a few seconds earlier.
+    # Same sections, same pointers, none of the wait.
+    for law in statutes.related_laws(found.statute_hits):
         next_steps.append(f"Also look at the {law['name']}. {law['why']}")
 
     if needs_support(question):
@@ -514,11 +666,13 @@ async def answer_question_stream(
       ("revised", str)        - a corrected body, when the validator rejects
                                 what was already shown
 
-    The validator still runs and still blocks the "done" event, so nothing is
-    stored or badged unchecked. What changes is that the reader is not staring
-    at a spinner while it happens. On the rare occasion the validator rejects
-    the draft, the body is replaced - visibly - rather than never having been
-    shown, which is the honest trade for the wait being gone.
+    The validator always runs. With STREAM_DONE_BEFORE_VALIDATION set it runs
+    after "done" rather than before it, so "revised" can arrive last: the
+    reader gets the citations as soon as the prose is finished instead of
+    waiting on a check that passes almost every time, and on the rare
+    rejection the body is replaced - visibly - as it was before. Callers must
+    therefore treat a later "revised" as authoritative over the body inside
+    "done", and correct anything they stored from it.
     """
     if not settings.gemini_api_key:
         yield "error", "GEMINI_API_KEY is not set."
@@ -542,7 +696,8 @@ async def answer_question_stream(
             return
 
     t0 = time.perf_counter()
-    sources = await retrieve(question, state, history, document)
+    found = await retrieve(question, state, history, document)
+    sources = found.sources
     t_retrieve = time.perf_counter() - t0
 
     if not sources and not document:
@@ -576,29 +731,90 @@ async def answer_question_stream(
     body = draft["body"]
 
     # --- Internal validator ---
-    # Skipped for documents, exactly as in the buffered path.
-    t2 = time.perf_counter()
-    try:
-        verdict = (
-            {"grounded": True, "issues": [], "revised_body": ""}
-            if document
-            else await gemini.validate(question, draft, sources, state)
+    # Skipped for documents, exactly as in the buffered path - and for an
+    # act-overview answer, for a related reason.
+    #
+    # An overview is a hand-written paragraph about a whole act: what it
+    # replaced, how many sections it has, what it covers. It cannot support a
+    # section-level claim, so "murder is in BNS 103" is unsupported by the
+    # only excerpt available and the validator rejects it every single time -
+    # then pays for a 3,000-token revision that replaces a correct answer
+    # with a hedge. Two Gemini calls to make the answer worse.
+    #
+    # The honest alternative is to retrieve real sections alongside the
+    # overview so the claims ARE checkable; that changes what these questions
+    # return and wants benchmarking against the question set first, which is
+    # why it isn't done here.
+    overview_only = bool(sources) and all(
+        s.get("kind") == "overview" for s in sources
+    )
+    skip_validation = bool(document) or overview_only
+    if overview_only:
+        logger.info("Validator skipped: act-overview answer, nothing to check against")
+
+    async def _verdict() -> Dict[str, Any]:
+        if skip_validation:
+            return {"grounded": True, "issues": [], "revised_body": ""}
+        return await gemini.validate(question, draft, sources, state)
+
+    def _replacement(verdict: Dict[str, Any]) -> Optional[str]:
+        """The body to show instead, or None if the draft stands."""
+        if verdict["grounded"]:
+            return None
+        logger.info("Validator flagged answer: %s", verdict["issues"])
+        return verdict["revised_body"] or (
+            "The provisions and judgments retrieved for this question "
+            "don't clearly answer it, so a reliable plain-language "
+            "summary can't be given here. The sources below are the "
+            "closest matches - it's worth reading them, or speaking to "
+            "a lawyer, before acting."
         )
-        if not verdict["grounded"]:
-            logger.info("Validator flagged answer: %s", verdict["issues"])
-            body = verdict["revised_body"] or (
-                "The provisions and judgments retrieved for this question "
-                "don't clearly answer it, so a reliable plain-language "
-                "summary can't be given here. The sources below are the "
-                "closest matches - it's worth reading them, or speaking to "
-                "a lawyer, before acting."
-            )
+
+    t2 = time.perf_counter()
+
+    if STREAM_DONE_BEFORE_VALIDATION and not skip_validation:
+        # The validator's round trip used to sit between the last streamed
+        # word and the citations appearing - about a second and a half of
+        # spinner on every answer, including the ~95% the validator passes
+        # without comment. It starts here and runs while the payload is
+        # assembled and sent, so the reader gets the sources immediately and
+        # the check still completes before this generator ends.
+        task = asyncio.create_task(_verdict())
+        try:
+            yield "done", _finalise(question, body, draft, found)
+        except GeneratorExit:
+            # The client hung up while we were handing over the payload. The
+            # validator is in flight and nothing is left to read its verdict,
+            # so cancel it rather than leaving an orphaned task holding a
+            # connection for the rest of the request's lifetime.
+            task.cancel()
+            raise
+
+        try:
+            replacement = _replacement(await task)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            logger.warning("Validator step failed, leaving the draft as sent: %s", exc)
+            replacement = None
+
+        t_validate = time.perf_counter() - t2
+        if replacement:
             # The reader has already seen the draft, so say plainly that it
-            # has been replaced rather than swapping it out silently.
+            # has been replaced rather than swapping it out silently. The
+            # caller uses this to correct the stored answer too.
+            body = replacement
             yield "revised", body
-    except Exception as exc:
-        logger.warning("Validator step failed, returning unvalidated draft: %s", exc)
-    t_validate = time.perf_counter() - t2
+    else:
+        try:
+            replacement = _replacement(await _verdict())
+            if replacement:
+                body = replacement
+                yield "revised", body
+        except Exception as exc:
+            logger.warning("Validator step failed, returning unvalidated draft: %s", exc)
+        t_validate = time.perf_counter() - t2
+        yield "done", _finalise(question, body, draft, found)
 
     logger.info(
         "TIMING(stream) retrieve=%.2fs synth=%.2fs validate=%.2fs total=%.2fs "
@@ -606,8 +822,6 @@ async def answer_question_stream(
         t_retrieve, t_synth, t_validate, time.perf_counter() - t0,
         len(sources), len(body),
     )
-
-    yield "done", _finalise(question, body, draft, sources)
 
 
 async def answer_question(

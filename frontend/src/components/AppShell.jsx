@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '../AuthContext';
-import { fetchMyProfile, fetchUnreadCounts } from '../networkApi';
+import { fetchMyProfile, fetchUnreadCounts, prefetch } from '../networkApi';
+import { prefetchRoute } from '../api';
 import ThemeToggle from './ThemeToggle';
 
 /* The topbar and nav rail, shared so /ask, /matters and the network pages
@@ -109,6 +110,13 @@ export const NavIcon = {
 
 const POLL_MS = 30000;
 
+/* A mount does not justify a request if the numbers are this fresh. Several
+   components call useNetworkBadges() and each one used to trigger _load() as
+   it subscribed, so a single navigation fired the poll two or three times -
+   each a database round trip - for counts that had just been fetched. */
+const MOUNT_FRESH_MS = 10000;
+let _loadedAt = 0;
+
 let _counts = { notifications: 0, messages: 0, requests: 0 };
 let _profile = null;
 let _subs = new Set();
@@ -119,10 +127,12 @@ function _emit() {
   _subs.forEach((fn) => fn({ counts: _counts, profile: _profile }));
 }
 
-async function _load() {
+async function _load({ force = false } = {}) {
   if (!_token) return;
+  if (!force && Date.now() - _loadedAt < MOUNT_FRESH_MS) return;
   try {
     const c = await fetchUnreadCounts(_token);
+    _loadedAt = Date.now();
     _counts = c;
     _emit();
   } catch (_) {
@@ -132,7 +142,9 @@ async function _load() {
 }
 
 export function refreshBadges() {
-  _load();
+  // Always forced: this is called right after accepting or sending
+  // something, where showing a stale number is the whole problem.
+  _load({ force: true });
 }
 
 /* Cleared on logout, otherwise the next account inherits the previous one's
@@ -158,6 +170,7 @@ export function useNetworkBadges() {
       _token = token;
       resetBadges();
       _profile = null;
+      _loadedAt = 0;
     }
 
     _subs.add(setState);
@@ -275,9 +288,19 @@ export function AppTopbar({ sidebarOpen, onToggleSidebar }) {
    mode in place instead of navigating and losing its thread. */
 
 export function AppNav({ active, onWorkspace }) {
-  const { isAdvocate } = useAuth();
+  const { isAdvocate, token } = useAuth();
   const navigate = useNavigate();
   const { counts } = useNetworkBadges();
+
+  /* Start the page's reads on hover or keyboard focus, before the click.
+     Both api.js and networkApi.js de-duplicate, so the page's own effects
+     find the request already in flight (or already answered) rather than
+     issuing a second one. */
+  const warm = (route) => {
+    if (!route) return;
+    prefetch(route, token);
+    prefetchRoute(route, token, { isAdvocate });
+  };
 
   const items = [
     { id: 'ask', label: 'Ask', icon: NavIcon.ask },
@@ -337,6 +360,8 @@ export function AppNav({ active, onWorkspace }) {
             role="tab"
             aria-selected={active === m.id}
             className={`ask-nav-item ${active === m.id ? 'active' : ''}`}
+            onPointerEnter={() => warm(m.route || (m.id === 'matters' ? '/matters' : '/ask'))}
+            onFocus={() => warm(m.route || (m.id === 'matters' ? '/matters' : '/ask'))}
             onClick={() => {
               if (m.route) return navigate(m.route);
               if (onWorkspace) return onWorkspace(m.id);

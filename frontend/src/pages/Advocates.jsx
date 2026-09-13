@@ -99,15 +99,30 @@ export default function Advocates() {
   }, [authLoading, isAdvocate, navigate]);
 
   useEffect(() => {
-    if (authLoading || !token || isAdvocate) return;
-    fetchAdvocateFilters(token).then(setOptions).catch(() => {});
+    if (authLoading || !token || isAdvocate) return undefined;
+    let alive = true;
+    fetchAdvocateFilters(token)
+      .then((o) => { if (alive) setOptions(o); })
+      .catch(() => {});
+    return () => { alive = false; };
   }, [authLoading, token, isAdvocate]);
 
   // Debounced: typing in the search box shouldn't fire a request per
   // keystroke, but a dropdown change should feel immediate, so 300ms is the
   // compromise rather than a submit button.
+  //
+  // The FIRST load is not debounced. It used to be, which meant every visit
+  // to this page sat still for 300ms before it even asked for anything -
+  // added to the round trip, and entirely self-inflicted, since there is no
+  // keystroke to wait for when the page has only just mounted.
+  const searchedOnce = useRef(false);
   useEffect(() => {
     if (authLoading || !token || isAdvocate) return undefined;
+    if (!searchedOnce.current) {
+      searchedOnce.current = true;
+      run(form, page);
+      return undefined;
+    }
     const t = setTimeout(() => run(form, page), 300);
     return () => clearTimeout(t);
   }, [authLoading, token, isAdvocate, form, page, run]);
