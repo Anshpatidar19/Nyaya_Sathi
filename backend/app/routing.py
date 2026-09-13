@@ -66,13 +66,29 @@ _SITUATION_RE = re.compile(
 )
 
 
-def decide(
+def prejudge(
     question: str,
-    statute_hits: List[Dict[str, Any]],
     overview: Optional[Dict[str, Any]] = None,
-) -> Decision:
-    """Should this question spend Kanoon credit?"""
+) -> Optional[Decision]:
+    """The part of decide() that needs no BM25 result. None when it can't tell.
 
+    Why this exists: decide() takes `statute_hits`, so the Kanoon search used
+    to start only after the local BM25 pass (and, when the dense fallback
+    fires, an embedding call and two Pinecone lookups) had finished. Those are
+    independent lookups against different systems and there is no reason to
+    run them one after the other.
+
+    Six of decide()'s nine branches look only at the wording of the question,
+    and between them they cover most real traffic - anything phrased as a
+    situation, anything asking for case law, any exact citation, any act
+    overview. For those, the routing answer is known immediately and the
+    Kanoon search can be fired off in parallel with the local retrieval.
+
+    The branches that genuinely need the hits (5, 7, 8) return None, and the
+    caller falls back to decide() once the local pass is in. Same decision
+    either way - the ordering here is identical to decide()'s, so a question
+    can never be routed differently depending on which function saw it.
+    """
     # 1. Act-level overview - answered from a hand-written summary.
     if overview:
         return Decision(False, "act overview, answered locally")
@@ -93,6 +109,32 @@ def decide(
     if wants_cases:
         return Decision(True, "user asked for case law", doc_fetches=3)
 
+    # 5. Definitional phrasing - needs to know whether BM25 found anything
+    #    before it can be answered locally. Undecidable here.
+    if _LOOKUP_RE.search(question) and not _SITUATION_RE.search(question):
+        return None
+
+    # 6. A described situation - this is where case law earns its keep.
+    if _SITUATION_RE.search(question):
+        return Decision(True, "situational question, case law applies the rule")
+
+    # 7-9. All depend on whether there were local hits.
+    return None
+
+
+def decide(
+    question: str,
+    statute_hits: List[Dict[str, Any]],
+    overview: Optional[Dict[str, Any]] = None,
+) -> Decision:
+    """Should this question spend Kanoon credit?"""
+
+    # Branches 1-4 and 6 don't need the hits at all; prejudge() holds them so
+    # the two functions can't drift apart.
+    early = prejudge(question, overview)
+    if early is not None:
+        return early
+
     # 5. Definitional phrasing with a solid local match - "what is cheating",
     #    "define grievous hurt". The section defines it; a judgment doesn't
     #    make the definition clearer.
@@ -102,10 +144,6 @@ def decide(
         and not _SITUATION_RE.search(question)
     ):
         return Decision(False, "definitional question, statute answers it")
-
-    # 6. A described situation - this is where case law earns its keep.
-    if _SITUATION_RE.search(question):
-        return Decision(True, "situational question, case law applies the rule")
 
     # 7. Bare citation with no other signal, e.g. "s. 138".
     if _STATUTE_ONLY_RE.search(question) and statute_hits:

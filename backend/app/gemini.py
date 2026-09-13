@@ -732,10 +732,40 @@ Return ONLY a JSON object:
 }"""
 
 
-# The validator only has to decide whether each claim is supported. It does not
-# need the full judgment to do that, and sending 6,000 characters per source
-# costs latency on every single answer.
-VALIDATOR_EXCERPT_CHARS = 2000
+# How much of each source the validator sees.
+#
+# This needs care, and getting it wrong is expensive in a way that is not
+# obvious: too short and the validator flags claims the source DOES support,
+# which fails a correct answer, triggers the revision pass, and replaces good
+# prose with a hedge. That costs a second 3,000-token call AND quality. So the
+# budget is per source KIND, not one number for everything.
+#
+# Statutes and overviews: effectively untruncated. A bare-act section IS the
+# ground truth being checked against, and the long ones are long for a reason
+# - BNS 101 runs 6,400 characters because the five exceptions to murder are
+# part of the section. Cutting it at 1,200 deletes every exception, and the
+# validator then correctly reports that "grave and sudden provocation" appears
+# in no excerpt. 18% of the corpus is over 1,200 characters; the cap below
+# clears all but a handful of outliers.
+#
+# Judgments: these are the genuinely bloated sources, and unlike a section a
+# judgment fragment is a ranked list of matched passages, so the tail is its
+# weakest material. A judgment is also supporting material - it shows how a
+# rule was applied, it is not the rule - so a shorter excerpt is enough to
+# confirm a claim came from somewhere real.
+VALIDATOR_STATUTE_CHARS = 8000
+VALIDATOR_JUDGMENT_CHARS = 1200
+VALIDATOR_UNUSED_CHARS = 500
+
+_STATUTE_KINDS = ("section", "overview")
+
+
+def _validator_cap(source: Dict[str, Any], index: int, used: set) -> int:
+    if source.get("kind") in _STATUTE_KINDS:
+        return VALIDATOR_STATUTE_CHARS
+    if not used or index in used:
+        return VALIDATOR_JUDGMENT_CHARS
+    return VALIDATOR_UNUSED_CHARS
 
 
 async def validate(
@@ -744,12 +774,21 @@ async def validate(
     sources: List[Dict[str, Any]],
     state: Optional[str] = None,
 ) -> Dict[str, Any]:
+    # Index order is preserved on purpose: the numbers the draft cites in
+    # used_sources have to keep pointing at the same sources here.
+    used = set(draft.get("used_sources") or [])
     blocks = []
     for i, s in enumerate(sources, start=1):
         excerpt = (s.get("text") or s.get("snippet") or "(no text available)")
+        cap = _validator_cap(s, i, used)
+        clipped = excerpt[:cap]
+        # Say so when it happened. Otherwise the validator reads a cut-off
+        # section as the whole provision and flags the missing part.
+        if len(excerpt) > cap:
+            clipped += "\n    [... excerpt truncated - the provision continues]"
         blocks.append(
             f"[{i}] {s.get('title') or 'Untitled'} ({s.get('court') or 'Unknown'})\n"
-            f"    EXCERPT: {excerpt[:VALIDATOR_EXCERPT_CHARS]}"
+            f"    EXCERPT: {clipped}"
         )
 
     # The synthesis agent is told the user's state, so the draft can legitimately

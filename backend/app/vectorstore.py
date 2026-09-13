@@ -99,8 +99,25 @@ def _client():
     return Pinecone(api_key=key)
 
 
+# The handle, once we have one. ensure_index() is called on every dense query,
+# and list_indexes() is a network round trip to Pinecone's control plane -
+# 200-400ms of the user's wait, spent re-confirming something that cannot have
+# changed since the process started. The existence check runs once; after that
+# this is a dict lookup.
+_index_handle: Dict[str, Any] = {}
+
+
 def ensure_index(*, cloud: str = "", region: str = ""):
-    """Create the index if it isn't there, then return a handle."""
+    """Create the index if it isn't there, then return a handle.
+
+    Cached per process. If the index is deleted out from under a running
+    server, restart it - which is the same thing you would have to do anyway,
+    since Pinecone hands out a host-specific client.
+    """
+    cached = _index_handle.get(INDEX_NAME)
+    if cached is not None:
+        return cached
+
     st = _settings()
     cloud = cloud or (getattr(st, "pinecone_cloud", "") if st else "") or "aws"
     region = region or (getattr(st, "pinecone_region", "") if st else "") or "us-east-1"
@@ -116,7 +133,9 @@ def ensure_index(*, cloud: str = "", region: str = ""):
             metric="cosine",
             spec=ServerlessSpec(cloud=cloud, region=region),
         )
-    return pc.Index(INDEX_NAME)
+    handle = pc.Index(INDEX_NAME)
+    _index_handle[INDEX_NAME] = handle
+    return handle
 
 
 # --- writing --------------------------------------------------------------

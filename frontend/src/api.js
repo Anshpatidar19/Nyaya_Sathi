@@ -38,6 +38,22 @@ async function cachedGet(url, token, { fresh = false } = {}) {
   }
 }
 
+/* Warm the cache for a route before the user commits to it.
+
+   The nav rail calls this on hover and focus. At ~300ms per database round
+   trip, the moment between intending to click and clicking is enough to have
+   the response already in hand. Errors are swallowed: a speculative read
+   must never raise on the page still being viewed. */
+export function prefetchRoute(route, token, { isAdvocate = false } = {}) {
+  if (!token) return;
+  if (route === '/matters' && isAdvocate) {
+    cachedGet(`${BASE_URL}/matters`, token).catch(() => {});
+    cachedGet(`${BASE_URL}/matters/upcoming?days=30`, token).catch(() => {});
+  } else if (route === '/ask') {
+    cachedGet(`${BASE_URL}/conversations`, token).catch(() => {});
+  }
+}
+
 /* Called after any write, so the next read doesn't serve a stale list. */
 export function invalidateReads(prefix = '') {
   for (const key of [..._recent.keys()]) {
@@ -130,16 +146,22 @@ export async function askQuestion(token, { question, state, conversation_id, doc
 }
 
 // Streams the answer as it is written. onDelta gets each new run of body
-// text, onRevised fires only when the validator replaced what was already
-// shown, and the promise resolves with the finished answer (citations,
-// grounding, next steps, conversation_id).
+// text, onDone fires the moment the finished payload arrives (citations,
+// grounding, next steps, conversation_id), onRevised fires only when the
+// validator replaced what was already shown, and the promise resolves with
+// the finished answer.
+//
+// onDone matters for latency. The backend now sends the payload before it
+// runs the validator, but this promise only settles when the STREAM CLOSES -
+// which is after the validator. Waiting on the return value therefore threw
+// away the entire saving; the caller has to render on onDone to see it.
 //
 // fetch + ReadableStream rather than EventSource: EventSource cannot send an
 // Authorization header or a POST body, and both are needed here.
 export async function askQuestionStream(
   token,
   { question, state, conversation_id, document_id },
-  { onDelta, onRevised } = {},
+  { onDelta, onDone, onRevised } = {},
 ) {
   const res = await fetch(`${BASE_URL}/ask/stream`, {
     method: 'POST',
@@ -160,6 +182,11 @@ export async function askQuestionStream(
   const decoder = new TextDecoder();
   let buffer = '';
   let answer = null;
+  // The validator now runs after `done` is sent, so `revised` can be the last
+  // frame on the stream. Without this the caller's final render would put the
+  // rejected draft back on screen, overwriting the correction onRevised had
+  // just applied.
+  let revisedBody = null;
 
   for (;;) {
     const { done, value } = await reader.read();
@@ -183,13 +210,18 @@ export async function askQuestionStream(
       }
 
       if (event.type === 'delta') onDelta?.(event.text);
-      else if (event.type === 'revised') onRevised?.(event.body);
-      else if (event.type === 'done') answer = event.answer;
-      else if (event.type === 'error') throw new Error(event.message);
+      else if (event.type === 'revised') {
+        revisedBody = event.body;
+        onRevised?.(event.body);
+      } else if (event.type === 'done') {
+        answer = event.answer;
+        onDone?.(event.answer);
+      } else if (event.type === 'error') throw new Error(event.message);
     }
   }
 
   if (!answer) throw new Error('The answer ended before it was complete.');
+  if (revisedBody !== null) return { ...answer, body: revisedBody, revised: true };
   return answer;
 }
 

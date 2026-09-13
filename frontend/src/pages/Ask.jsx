@@ -503,6 +503,25 @@ export default function Ask() {
         const replace = (body) =>
           patchLast((turn0) => ({ ...turn0, body, revised: true }));
 
+        // Render the finished card the moment the payload lands. The
+        // validator runs after it server-side, so the promise below does not
+        // settle for another second or two - waiting for it would put the
+        // citations back behind exactly the wait this was meant to remove.
+        const settle = (data) =>
+          patchLast((turn0) => ({
+            ...turn0,
+            kind: 'ask',
+            ...data,
+            prompt: bubble,
+            file: sentFile?.filename,
+          }));
+
+        // Released here too, for the same reason: `loading` gates the
+        // composer, and holding it until the promise settles keeps the box
+        // disabled through the validator's round trip on an answer that is
+        // already fully on screen.
+        const unlock = () => setLoading(false);
+
         const data = await askQuestionStream(
           token,
           {
@@ -511,7 +530,11 @@ export default function Ask() {
             conversation_id: conversationId,
             document_id: sentFile?.id,
           },
-          { onDelta: append, onRevised: replace },
+          {
+            onDelta: append,
+            onDone: (d) => { settle(d); unlock(); },
+            onRevised: replace,
+          },
         );
 
         if (data.conversation_id) {

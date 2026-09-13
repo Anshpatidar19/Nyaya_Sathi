@@ -108,16 +108,47 @@ def _redact(text: str) -> str:
     return re.sub(r"\bAQ\.[A-Za-z0-9_\-]{8,}", "<redacted>", text)
 
 
+# One client for the process. `with httpx.Client()` per call meant a fresh TCP
+# connection and a full TLS handshake to generativelanguage.googleapis.com on
+# every request - 200-400ms, and at query time that lands directly in the
+# user's wait whenever the dense fallback fires.
+_client: Optional[httpx.Client] = None
+
+
+def _get_client() -> httpx.Client:
+    global _client
+    if _client is None or _client.is_closed:
+        _client = httpx.Client(
+            timeout=_TIMEOUT,
+            limits=httpx.Limits(max_keepalive_connections=4, max_connections=8),
+        )
+    return _client
+
+
+def close_client() -> None:
+    """Release the pool. Ingestion scripts can call this when they finish."""
+    global _client
+    if _client is not None and not _client.is_closed:
+        _client.close()
+    _client = None
+
+
 def _post(url: str, payload: dict) -> dict:
     """POST with backoff. 429 and 5xx are retried; 4xx are not, because a bad
-    request will fail identically every time and retrying just hides it."""
+    request will fail identically every time and retrying just hides it.
+
+    Still synchronous, and still uses time.sleep for its backoff. That is
+    fine now because every request-time caller reaches this through
+    asyncio.to_thread (see reasoning.retrieve) - on the event loop, that
+    sleep froze the whole process, including answers being streamed to other
+    users.
+    """
     last: Optional[Exception] = None
     headers = {"x-goog-api-key": _api_key(),
                "Content-Type": "application/json"}
     for attempt in range(_MAX_RETRIES):
         try:
-            with httpx.Client(timeout=_TIMEOUT) as client:
-                r = client.post(url, json=payload, headers=headers)
+            r = _get_client().post(url, json=payload, headers=headers)
             if r.status_code == 200:
                 return r.json()
             if r.status_code == 429 or r.status_code >= 500:
