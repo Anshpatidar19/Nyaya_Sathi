@@ -113,7 +113,9 @@
 
 .nx-nav-divider { margin: 10px 0 8px; }
 /* A label over the second nav group. Without it the two halves ran together
-   as one undifferentiated list of seven items. */
+   as one undifferentiated list of seven items.
+   Now also the control that expands the group, so it is a button rather than
+   a div - same type scale as before, plus a hit area and a chevron. */
 .nx-nav-group {
   padding: 0 10px 6px;
   font-size: 11px;
@@ -121,6 +123,61 @@
   text-transform: uppercase;
   letter-spacing: .07em;
   color: var(--ink-faint);
+}
+.nx-nav-group-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 7px 10px;
+  margin-bottom: 2px;
+  border: 0;
+  background: transparent;
+  border-radius: var(--radius-s);
+  font-family: inherit;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: .07em;
+  color: var(--ink-faint);
+  text-align: left;
+  cursor: pointer;
+  transition: background .15s, color .15s;
+}
+.nx-nav-group-toggle:hover { background: var(--bg); color: var(--ink-muted); }
+.nx-nav-group-chevron {
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  /* Points right when collapsed, down when open. Rotating one glyph keeps
+     the two states visibly the same control. */
+  transition: transform .18s ease;
+}
+.nx-nav-group-toggle[aria-expanded='true'] .nx-nav-group-chevron {
+  transform: rotate(90deg);
+}
+.nx-nav-group-chevron svg { width: 14px; height: 14px; }
+/* The count that would otherwise be hidden inside a collapsed group. Smaller
+   and quieter than a per-item badge: it is a "something in here" marker, not
+   a number you act on. */
+.nx-nav-group-count {
+  margin-left: auto;
+  flex-shrink: 0;
+  min-width: 17px;
+  height: 17px;
+  padding: 0 5px;
+  border-radius: 999px;
+  background: var(--accent);
+  color: var(--on-accent);
+  font-size: 10.5px;
+  font-weight: 800;
+  letter-spacing: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 .nx-nav-badge {
   margin-left: auto;
@@ -642,35 +699,6 @@
 }
 .nx-msg.mine .nx-msg-time { color: var(--accent-dark); opacity: .75; }
 .nx-msg-read { font-weight: 700; letter-spacing: -1px; }
-
-/* -- attachments (document sent/received in a message) -- */
-.nx-attach-card {
-  display: flex; align-items: center; gap: 9px;
-  width: 100%; max-width: 260px;
-  padding: 8px 10px;
-  border: 1px solid var(--line); border-radius: 10px;
-  background: var(--bg);
-  cursor: pointer; text-align: left;
-  font-family: inherit;
-  transition: border-color .15s, background .15s;
-  margin-bottom: 6px;
-}
-.nx-attach-card:hover:not(:disabled) { border-color: var(--accent); background: var(--accent-soft); }
-.nx-attach-card:disabled { cursor: not-allowed; opacity: .7; }
-.nx-msg.mine .nx-attach-card { background: var(--surface); }
-.nx-attach-ic {
-  flex-shrink: 0; display: flex; align-items: center; justify-content: center;
-  width: 30px; height: 30px; border-radius: 8px;
-  background: var(--mint); color: var(--accent-dark);
-}
-.nx-attach-ic svg { width: 15px; height: 15px; }
-.nx-attach-info { min-width: 0; display: flex; flex-direction: column; gap: 1px; }
-.nx-attach-name {
-  font-size: 13px; font-weight: 600; color: var(--ink);
-  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-}
-.nx-attach-meta { font-size: 11px; color: var(--ink-faint); }
-.nx-attach-err { color: var(--danger, #c0392b); }
 
 /* -- composer -- */
 /* One control, not a box inside a box. The textarea used to carry its own

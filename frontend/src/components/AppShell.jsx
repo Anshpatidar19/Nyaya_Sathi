@@ -93,6 +93,12 @@ export const NavIcon = {
       <path d="M5 5l10 10M15 5L5 15" />
     </svg>
   ),
+  chevron: (
+    <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="2"
+         strokeLinecap="round" strokeLinejoin="round">
+      <path d="M7.5 4.5l6 5.5-6 5.5" />
+    </svg>
+  ),
 };
 
 /* ---------------------------------------------------------------------------
@@ -287,10 +293,44 @@ export function AppTopbar({ sidebarOpen, onToggleSidebar }) {
    `active` is the nav id currently showing. `onWorkspace` lets Ask switch
    mode in place instead of navigating and losing its thread. */
 
+/* Which nav group the second half of the rail belongs to. Collapsed by
+   default: the rail carries up to nine items for an advocate, and the four
+   network ones pushed the conversation history far enough down that it was
+   below the fold on a laptop. */
+const NAV_GROUP_KEY = 'ns_nav_group';
+const GROUP_IDS = ['advocates', 'network', 'messages', 'profile'];
+
 export function AppNav({ active, onWorkspace }) {
   const { isAdvocate, token } = useAuth();
   const navigate = useNavigate();
   const { counts } = useNetworkBadges();
+
+  /* Lazy initialiser, not an effect: the group must already be open on the
+     first paint when the page being rendered lives inside it, or /messages
+     would load with its own nav entry hidden.
+
+     Reading `active` here rather than deriving `open` from it on every
+     render is what keeps the toggle working. If open were
+     `stored || activeInGroup`, then on /messages the button could never
+     collapse - it would look broken. This way the stored preference is the
+     only thing the button fights with, and landing on a group page just
+     starts it open. */
+  const [groupOpen, setGroupOpen] = useState(() => {
+    if (GROUP_IDS.includes(active)) return true;
+    try {
+      return localStorage.getItem(NAV_GROUP_KEY) === 'open';
+    } catch (_) {
+      return false;
+    }
+  });
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(NAV_GROUP_KEY, groupOpen ? 'open' : 'closed');
+    } catch (_) {
+      /* private mode - the group just reverts to collapsed next time */
+    }
+  }, [groupOpen]);
 
   /* Start the page's reads on hover or keyboard focus, before the click.
      Both api.js and networkApi.js de-duplicate, so the page's own effects
@@ -302,7 +342,7 @@ export function AppNav({ active, onWorkspace }) {
     prefetchRoute(route, token, { isAdvocate });
   };
 
-  const items = [
+  const workspaceItems = [
     { id: 'ask', label: 'Ask', icon: NavIcon.ask },
     // Draft and Review are open to every account, same as /draft and
     // /review on the backend. Only Arguments and Matters are gated:
@@ -311,10 +351,9 @@ export function AppNav({ active, onWorkspace }) {
     { id: 'review', label: 'Review', icon: NavIcon.review },
     { id: 'argue', label: 'Arguments', icon: NavIcon.argue, advocateOnly: true },
     { id: 'matters', label: 'Matters', icon: NavIcon.matters, advocateOnly: true, route: '/matters' },
-    { divider: true, id: 'div-network' },
-    // Not 'Clients' - that is a tab label on the page this group links to,
-    // and the same word in two places made the tab look inert.
-    { group: true, id: 'grp', label: isAdvocate ? 'Your network' : 'Get help' },
+  ].filter((i) => !i.advocateOnly || isAdvocate);
+
+  const groupItems = [
     // Advocates do not see this. They have no reason to search the
     // directory, and the backend only accepts a request whose receiver is
     // an advocate - so the only thing an advocate could do here is connect
@@ -342,40 +381,63 @@ export function AppNav({ active, onWorkspace }) {
       badge: counts.messages,
     },
     { id: 'profile', label: 'My Profile', icon: NavIcon.profile, route: '/profile' },
-  ].filter((i) => (!i.advocateOnly || isAdvocate) && (!i.clientOnly || !isAdvocate));
+  ].filter((i) => !i.clientOnly || !isAdvocate);
+
+  // Not 'Clients' - that is a tab label on the page this group links to,
+  // and the same word in two places made the tab look inert.
+  const groupLabel = isAdvocate ? 'Your network' : 'Get help';
+
+  /* Collapsing must not hide an unread count. Summed rather than shown per
+     item, because the point at this size is only "open this to see". */
+  const groupCount = groupItems.reduce((n, i) => n + (i.badge || 0), 0);
+
+  const renderItem = (m) => (
+    <button
+      key={m.id}
+      type="button"
+      role="tab"
+      aria-selected={active === m.id}
+      className={`ask-nav-item ${active === m.id ? 'active' : ''}`}
+      onPointerEnter={() => warm(m.route || (m.id === 'matters' ? '/matters' : '/ask'))}
+      onFocus={() => warm(m.route || (m.id === 'matters' ? '/matters' : '/ask'))}
+      onClick={() => {
+        if (m.route) return navigate(m.route);
+        if (onWorkspace) return onWorkspace(m.id);
+        navigate(`/ask?mode=${m.id}`);
+      }}
+    >
+      <span className="ask-nav-icon">{m.icon}</span>
+      {m.label}
+      {m.badge > 0 && (
+        <span className="nx-nav-badge">{m.badge > 9 ? '9+' : m.badge}</span>
+      )}
+    </button>
+  );
 
   return (
     <nav className="ask-nav" role="tablist">
-      {items.map((m) =>
-        m.divider ? (
-          <div className="ask-sidebar-divider nx-nav-divider" key={m.id} />
-        ) : m.group ? (
-          <div className="nx-nav-group" key={m.id}>
-            {m.label}
-          </div>
-        ) : (
-          <button
-            key={m.id}
-            type="button"
-            role="tab"
-            aria-selected={active === m.id}
-            className={`ask-nav-item ${active === m.id ? 'active' : ''}`}
-            onPointerEnter={() => warm(m.route || (m.id === 'matters' ? '/matters' : '/ask'))}
-            onFocus={() => warm(m.route || (m.id === 'matters' ? '/matters' : '/ask'))}
-            onClick={() => {
-              if (m.route) return navigate(m.route);
-              if (onWorkspace) return onWorkspace(m.id);
-              navigate(`/ask?mode=${m.id}`);
-            }}
-          >
-            <span className="ask-nav-icon">{m.icon}</span>
-            {m.label}
-            {m.badge > 0 && (
-              <span className="nx-nav-badge">{m.badge > 9 ? '9+' : m.badge}</span>
-            )}
-          </button>
-        )
-      )}
+      {workspaceItems.map(renderItem)}
+
+      <div className="ask-sidebar-divider nx-nav-divider" />
+
+      <button
+        type="button"
+        className="nx-nav-group-toggle"
+        aria-expanded={groupOpen}
+        onClick={() => setGroupOpen((o) => !o)}
+      >
+        <span className="nx-nav-group-chevron" aria-hidden="true">
+          {NavIcon.chevron}
+        </span>
+        {groupLabel}
+        {!groupOpen && groupCount > 0 && (
+          <span className="nx-nav-group-count">
+            {groupCount > 9 ? '9+' : groupCount}
+          </span>
+        )}
+      </button>
+
+      {groupOpen && groupItems.map(renderItem)}
     </nav>
   );
 }

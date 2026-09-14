@@ -586,10 +586,21 @@ footer.site-footer{border-top:1px solid var(--line); padding:56px 0 34px; margin
   .ask-app{height:auto; min-height:100vh;}
   .ask-shell{height:auto; overflow:visible;}
   .ask-layout{flex-direction:column; height:auto;}
+  /* The topbar has to stay above the overlay, not under it.
+     The sidebar below is position:fixed from top:0, so without this it
+     covered the whole topbar - including the toggle that closes it. On a
+     split screen that left no way back out except a page reload. Sticky
+     rather than fixed so it still scrolls with a short page, and z-index
+     above the sidebar's 60. */
+  .ask-topbar{position:sticky; top:0; z-index:70;}
   /* On a narrow screen there's no room to push, so overlay instead. */
   .ask-sidebar{
     position:fixed; top:0; left:0; bottom:0; z-index:60;
     width:82vw; max-width:300px; flex:none; margin-left:0;
+    /* Clears the sticky topbar, so the panel's own first item is not
+       hidden behind it. Matches the topbar's 14px padding + 34px control
+       + 1px border, rounded up. */
+    padding-top:76px;
     transform:translateX(0);
     transition:transform .24s cubic-bezier(.4,0,.2,1);
     box-shadow:var(--shadow-soft);
