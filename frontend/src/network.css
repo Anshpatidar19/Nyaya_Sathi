@@ -643,6 +643,35 @@
 .nx-msg.mine .nx-msg-time { color: var(--accent-dark); opacity: .75; }
 .nx-msg-read { font-weight: 700; letter-spacing: -1px; }
 
+/* -- attachments (document sent/received in a message) -- */
+.nx-attach-card {
+  display: flex; align-items: center; gap: 9px;
+  width: 100%; max-width: 260px;
+  padding: 8px 10px;
+  border: 1px solid var(--line); border-radius: 10px;
+  background: var(--bg);
+  cursor: pointer; text-align: left;
+  font-family: inherit;
+  transition: border-color .15s, background .15s;
+  margin-bottom: 6px;
+}
+.nx-attach-card:hover:not(:disabled) { border-color: var(--accent); background: var(--accent-soft); }
+.nx-attach-card:disabled { cursor: not-allowed; opacity: .7; }
+.nx-msg.mine .nx-attach-card { background: var(--surface); }
+.nx-attach-ic {
+  flex-shrink: 0; display: flex; align-items: center; justify-content: center;
+  width: 30px; height: 30px; border-radius: 8px;
+  background: var(--mint); color: var(--accent-dark);
+}
+.nx-attach-ic svg { width: 15px; height: 15px; }
+.nx-attach-info { min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+.nx-attach-name {
+  font-size: 13px; font-weight: 600; color: var(--ink);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.nx-attach-meta { font-size: 11px; color: var(--ink-faint); }
+.nx-attach-err { color: var(--danger, #c0392b); }
+
 /* -- composer -- */
 /* One control, not a box inside a box. The textarea used to carry its own
    border and sit inside the bordered footer strip, which read as two nested

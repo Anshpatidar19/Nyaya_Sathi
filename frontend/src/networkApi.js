@@ -241,8 +241,13 @@ export const fetchThread = (token, id) => get(`/network/threads/${id}`, token);
 export const fetchMessages = (token, threadId, { after_id } = {}) =>
   get(`/network/threads/${threadId}/messages`, token, { after_id });
 
-export const postMessage = (token, threadId, content) =>
-  send('POST', `/network/threads/${threadId}/messages`, token, { content });
+// `content` and `document_id` are both optional on the wire - a message
+// needs one or the other (or both), enforced server-side.
+export const postMessage = (token, threadId, { content, document_id } = {}) =>
+  send('POST', `/network/threads/${threadId}/messages`, token, {
+    content: content || undefined,
+    document_id: document_id || undefined,
+  });
 
 export const markThreadRead = (token, threadId) =>
   send('POST', `/network/threads/${threadId}/read`, token);

@@ -8,6 +8,7 @@ import {
 } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { useAuth } from '../AuthContext';
+import { fetchDocumentUrl, uploadDocument } from '../api';
 import {
   fetchMessages,
   fetchThread,
@@ -44,6 +45,77 @@ const MESSAGE_POLL_MS = 3000;
 const THREAD_POLL_MS = 12000;
 
 const MAX_CHARS = 5000;
+
+// Mirrors storage.ALLOWED_TYPES / MAX_BYTES on the backend - this only
+// filters the OS picker and gives an early error, the server still enforces
+// both for real.
+const ACCEPT = '.pdf,.doc,.docx,.txt,.jpg,.jpeg,.png,.webp';
+const MAX_UPLOAD_BYTES = 10 * 1024 * 1024;
+
+function formatBytes(n) {
+  if (!n && n !== 0) return '';
+  if (n < 1024) return `${n} B`;
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(0)} KB`;
+  return `${(n / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+const ClipIcon = (
+  <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.6"
+       strokeLinecap="round" strokeLinejoin="round">
+    <path d="M14.5 9.2l-5 5a3.1 3.1 0 0 1-4.4-4.4l6-6a2.1 2.1 0 0 1 3 3l-6 6a1.1 1.1 0 0 1-1.5-1.5l5.2-5.2" />
+  </svg>
+);
+
+const FileIcon = (
+  <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.6"
+       strokeLinecap="round" strokeLinejoin="round">
+    <path d="M5 2.5h6l4 4v11H5z" />
+    <path d="M11 2.5v4h4" />
+  </svg>
+);
+
+/* A sent or received file. Opens on click via a freshly signed URL - the
+   stored path is private, so nothing is fetchable without one. Each card
+   holds its own loading state rather than the whole conversation's, since
+   opening one file shouldn't disable every other bubble on screen. */
+function AttachmentCard({ attachment, token }) {
+  const [opening, setOpening] = useState(false);
+  const [error, setError] = useState('');
+
+  async function open() {
+    if (opening) return;
+    setOpening(true);
+    setError('');
+    try {
+      const { url } = await fetchDocumentUrl(token, attachment.id);
+      window.open(url, '_blank', 'noopener');
+    } catch (err) {
+      setError(err.message || "Couldn't open that file.");
+    } finally {
+      setOpening(false);
+    }
+  }
+
+  return (
+    <button
+      type="button"
+      className="nx-attach-card"
+      onClick={open}
+      disabled={opening}
+      title={attachment.filename}
+    >
+      <span className="nx-attach-ic">{opening ? <span className="spinner" /> : FileIcon}</span>
+      <span className="nx-attach-info">
+        <span className="nx-attach-name">{attachment.filename}</span>
+        {error ? (
+          <span className="nx-attach-meta nx-attach-err">{error}</span>
+        ) : (
+          <span className="nx-attach-meta">{formatBytes(attachment.size_bytes)}</span>
+        )}
+      </span>
+    </button>
+  );
+}
 
 /* Consecutive messages from the same person within this window are grouped:
    tighter spacing, one timestamp. A back-and-forth otherwise renders as a
@@ -189,9 +261,13 @@ function Conversation({ threadId }) {
   const [sendError, setSendError] = useState('');
   const [draft, setDraft] = useState('');
   const [sending, setSending] = useState(false);
+  // The uploaded-but-not-yet-sent file: { id, filename, content_type, size_bytes }.
+  const [attachment, setAttachment] = useState(null);
+  const [uploading, setUploading] = useState(false);
 
   const scrollRef = useRef(null);
   const textRef = useRef(null);
+  const fileInputRef = useRef(null);
   const lastIdRef = useRef(0);
   // Whether the view was pinned to the bottom BEFORE this render. Jumping
   // someone to the newest message while they read back through the history
@@ -286,16 +362,55 @@ function Conversation({ threadId }) {
     wasAtBottomRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 60;
   }
 
+  function clearAttachment() {
+    setAttachment(null);
+    // Without resetting the input's value, picking the same file twice in a
+    // row fires no change event and the upload silently no-ops.
+    if (fileInputRef.current) fileInputRef.current.value = '';
+  }
+
+  async function handleFilePicked(e) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    if (file.size > MAX_UPLOAD_BYTES) {
+      setSendError('That file is larger than 10 MB. Try a smaller one.');
+      clearAttachment();
+      return;
+    }
+
+    setSendError('');
+    setUploading(true);
+    try {
+      const doc = await uploadDocument(token, file);
+      setAttachment({
+        id: doc.id,
+        filename: doc.filename,
+        content_type: doc.content_type,
+        size_bytes: doc.size_bytes,
+      });
+    } catch (err) {
+      setSendError(err.message);
+      clearAttachment();
+    } finally {
+      setUploading(false);
+    }
+  }
+
   async function send() {
     const content = draft.trim();
-    if (!content || sending) return;
+    if ((!content && !attachment) || sending || uploading) return;
     setSending(true);
     setSendError('');
     wasAtBottomRef.current = true;
     try {
-      const msg = await postMessage(token, threadId, content);
+      const msg = await postMessage(token, threadId, {
+        content,
+        document_id: attachment?.id,
+      });
       merge([msg]);
       setDraft('');
+      clearAttachment();
       if (textRef.current) textRef.current.style.height = 'auto';
     } catch (err) {
       // The draft is deliberately NOT cleared - a failed send that also
@@ -446,7 +561,8 @@ function Conversation({ threadId }) {
                   }`}
                 >
                   <div className="nx-msg-bubble">
-                    <span className="nx-msg-text">{m.content}</span>
+                    {m.attachment && <AttachmentCard attachment={m.attachment} token={token} />}
+                    {m.content && <span className="nx-msg-text">{m.content}</span>}
                     <span className="nx-msg-time">
                       {clockTime(m.created_at)}
                       {m.mine && m.read_at && (
@@ -478,7 +594,38 @@ function Conversation({ threadId }) {
       >
         <div className="ask-dock-row">
           {sendError && <div className="form-error nx-dock-error">{sendError}</div>}
+          {attachment && (
+            <div className="attach-chip">
+              <span className="attach-chip-ic">{FileIcon}</span>
+              <span className="attach-chip-name">{attachment.filename}</span>
+              <button
+                type="button"
+                className="attach-chip-x"
+                onClick={clearAttachment}
+                aria-label="Remove attachment"
+              >
+                ×
+              </button>
+            </div>
+          )}
           <div className="dock-box">
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept={ACCEPT}
+              onChange={handleFilePicked}
+              style={{ display: 'none' }}
+            />
+            <button
+              type="button"
+              className="attach-btn"
+              onClick={() => fileInputRef.current?.click()}
+              disabled={uploading || sending || !!attachment}
+              title="Attach a document"
+              aria-label="Attach a document"
+            >
+              {uploading ? <span className="spinner spinner-dark" /> : ClipIcon}
+            </button>
             <textarea
               ref={textRef}
               className="dock-input"
@@ -487,7 +634,7 @@ function Conversation({ threadId }) {
               value={draft}
               onChange={onInput}
               onKeyDown={onKeyDown}
-              placeholder={'Type your message\u2026'}
+              placeholder={attachment ? 'Add a caption\u2026 (optional)' : 'Type your message\u2026'}
               aria-label="Message"
             />
             {/* Only surfaces when the limit is actually in reach. */}
@@ -499,7 +646,7 @@ function Conversation({ threadId }) {
             <button
               className="dock-send"
               type="submit"
-              disabled={sending || !draft.trim()}
+              disabled={sending || uploading || (!draft.trim() && !attachment)}
               aria-label="Send message"
             >
               {sending ? <span className="spinner" /> : 'Send'}
