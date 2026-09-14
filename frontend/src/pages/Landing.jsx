@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
+import { useAuth } from '../AuthContext';
 
 const SAMPLE_ANSWERS = {
   rent: {
@@ -60,18 +61,41 @@ export default function Landing() {
   const [active, setActive] = useState('rent');
   const answer = SAMPLE_ANSWERS[active];
 
+  // Signed-in state is read from `token`, not `user`. The token comes straight
+  // out of localStorage in AuthProvider's useState initialiser, so it is known
+  // on the very first render; `user` only arrives after fetchMe resolves.
+  // Keying off `user` here would flash the signup buttons at an account that
+  // is already logged in, every time the landing page loads.
+  //
+  // Same reason the hero copy uses `user?.name` with a fallback: the button is
+  // correct immediately, the greeting fills in a moment later.
+  const { token, user } = useAuth();
+  const signedIn = Boolean(token);
+  const firstName = user?.name?.split(' ')[0];
+
   return (
     <main>
       {/* HERO */}
       <section className="hero">
         <div className="wrap hero-grid">
           <div>
-            <span className="eyebrow"><span className="dot" /> Live product — sign up to ask your own question</span>
+            <span className="eyebrow">
+              <span className="dot" />
+              {signedIn
+                ? 'Live product — your questions stay private to your account'
+                : 'Live product — sign up to ask your own question'}
+            </span>
             <h1>Know your rights, <span className="accent-word">explained simply.</span></h1>
             <p className="hero-sub">Ask any legal question in your own language. Nyaya Sathi turns Indian law into plain-language answers and a clear next step — never the raw statute, never legal jargon.</p>
             <div className="hero-actions">
-              <Link to="/register" className="btn btn-primary">Ask your question free →</Link>
-              <Link to="/login" className="btn btn-ghost">I already have an account</Link>
+              {signedIn ? (
+                <Link to="/ask" className="btn btn-primary">Ask a question →</Link>
+              ) : (
+                <>
+                  <Link to="/register" className="btn btn-primary">Ask your question free →</Link>
+                  <Link to="/login" className="btn btn-ghost">I already have an account</Link>
+                </>
+              )}
             </div>
             <div className="trust-row">
               <span className="avatars"><span /><span /><span /><span /></span>
@@ -210,9 +234,19 @@ export default function Landing() {
       <section>
         <div className="wrap">
           <div className="cta-band">
-            <h2>Create a free account and ask your question</h2>
-            <p>Sign up in under a minute — your questions and history stay private to your account.</p>
-            <Link to="/register" className="btn btn-primary">Get started free →</Link>
+            {signedIn ? (
+              <>
+                <h2>{firstName ? `Ask your next question, ${firstName}` : 'Ask your next question'}</h2>
+                <p>Your questions and history stay private to your account.</p>
+                <Link to="/ask" className="btn btn-primary">Ask a question →</Link>
+              </>
+            ) : (
+              <>
+                <h2>Create a free account and ask your question</h2>
+                <p>Sign up in under a minute — your questions and history stay private to your account.</p>
+                <Link to="/register" className="btn btn-primary">Get started free →</Link>
+              </>
+            )}
             <div className="disclaimer-line">Nyaya Sathi provides legal information, not legal advice, and does not create an advocate–client relationship.</div>
           </div>
         </div>
