@@ -35,7 +35,7 @@ from fastapi import (
     UploadFile,
     status,
 )
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 from sqlalchemy import func, or_
 from sqlalchemy.orm import Session, joinedload
 
@@ -189,6 +189,13 @@ class ConnectionOut(BaseModel):
     other_specialization: Optional[str] = None
 
 
+class MessageAttachmentOut(BaseModel):
+    id: int
+    filename: str
+    content_type: Optional[str] = None
+    size_bytes: Optional[int] = None
+
+
 class MessageOut(BaseModel):
     id: int
     thread_id: int
@@ -197,10 +204,21 @@ class MessageOut(BaseModel):
     created_at: datetime.datetime
     read_at: Optional[datetime.datetime] = None
     mine: bool = False
+    attachment: Optional[MessageAttachmentOut] = None
 
 
 class MessageCreate(BaseModel):
-    content: str = Field(min_length=1, max_length=MAX_MESSAGE_CHARS)
+    content: Optional[str] = Field(default=None, max_length=MAX_MESSAGE_CHARS)
+    # Id of a Document already uploaded via POST /documents (unattached -
+    # message_id still null). Set to send it as this message's attachment.
+    # A message needs text, a document, or both.
+    document_id: Optional[int] = None
+
+    @model_validator(mode="after")
+    def _needs_content_or_document(self):
+        if not (self.content or "").strip() and not self.document_id:
+            raise ValueError("Message needs text or a document.")
+        return self
 
 
 class ThreadOut(BaseModel):
@@ -285,6 +303,17 @@ def _card(user: Optional[models.User]) -> Optional[UserCard]:
         state=user.state,
         avatar_url=_avatar_url(user),
         is_demo=bool(user.is_demo),
+    )
+
+
+def _attachment_out(doc: Optional[models.Document]) -> Optional[MessageAttachmentOut]:
+    if doc is None:
+        return None
+    return MessageAttachmentOut(
+        id=doc.id,
+        filename=doc.filename,
+        content_type=doc.content_type,
+        size_bytes=doc.size_bytes,
     )
 
 
@@ -1208,6 +1237,19 @@ def list_threads(
         ):
             last_by_thread[msg.thread_id] = msg
 
+    # A document-only message has empty `content`, so its preview line needs
+    # the attachment's filename instead - one batched lookup, only run when
+    # a thread's last message is actually attachment-only.
+    empty_ids = [m.id for m in last_by_thread.values() if not m.content]
+    attachment_name_by_msg: dict = {}
+    if empty_ids:
+        attachment_name_by_msg = {
+            message_id: filename
+            for message_id, filename in db.query(
+                models.Document.message_id, models.Document.filename
+            ).filter(models.Document.message_id.in_(empty_ids))
+        }
+
     # The other participant for every thread, in one query.
     others = (
         db.query(models.ChatParticipant.thread_id, models.User)
@@ -1255,7 +1297,13 @@ def list_threads(
                 connection_id=thread.connection_id,
                 other=_card(other),
                 other_specialization=spec_by_user.get(other.id) if other else None,
-                last_message=_short(last.content, 90) if last else None,
+                last_message=(
+                    _short(last.content, 90)
+                    if last and last.content
+                    else f"\U0001f4ce {attachment_name_by_msg.get(last.id, 'Document')}"
+                    if last
+                    else None
+                ),
                 last_message_at=last.created_at if last else thread.last_message_at,
                 unread_count=unread,
             )
@@ -1319,6 +1367,18 @@ def list_messages(
         )
         rows.reverse()
 
+    # One batched lookup for every attachment in this page, rather than one
+    # query per message - same pattern as the inbox's last-message batching.
+    attachments: dict = {}
+    ids = [m.id for m in rows]
+    if ids:
+        for d in (
+            db.query(models.Document)
+            .filter(models.Document.message_id.in_(ids))
+            .all()
+        ):
+            attachments[d.message_id] = d
+
     return [
         MessageOut(
             id=m.id,
@@ -1328,6 +1388,7 @@ def list_messages(
             created_at=m.created_at,
             read_at=m.read_at,
             mine=m.sender_id == current_user.id,
+            attachment=_attachment_out(attachments.get(m.id)),
         )
         for m in rows
     ]
@@ -1342,8 +1403,26 @@ def send_message(
 ):
     thread = _thread_or_404(db, thread_id, current_user)
 
-    content = payload.content.strip()
-    if not content:
+    content = (payload.content or "").strip()
+
+    doc = None
+    if payload.document_id is not None:
+        doc = (
+            db.query(models.Document)
+            .filter(
+                models.Document.id == payload.document_id,
+                models.Document.user_id == current_user.id,  # ownership check
+            )
+            .first()
+        )
+        if not doc:
+            raise HTTPException(status_code=404, detail="Document not found.")
+        if doc.message_id is not None:
+            raise HTTPException(
+                status_code=400, detail="That document has already been sent."
+            )
+
+    if not content and not doc:
         raise HTTPException(status_code=400, detail="Message can't be empty.")
 
     # Belt and braces: pydantic already caps this, but the connection must
@@ -1367,6 +1446,9 @@ def send_message(
         created_at=now,
     )
     db.add(msg)
+    if doc is not None:
+        db.flush()  # need msg.id before the document can point at it
+        doc.message_id = msg.id
     thread.last_message_at = now
 
     other = _other_participant_user(db, thread, current_user.id)
@@ -1376,7 +1458,7 @@ def send_message(
             recipient_id=other.id,
             type_=models.NOTIFY_NEW_MESSAGE,
             title=f"New message from {current_user.name}",
-            body=_short(content, 120),
+            body=_short(content, 120) if content else f"Sent a document: {doc.filename}",
             related_user_id=current_user.id,
             related_connection_id=thread.connection_id,
             related_thread_id=thread.id,
@@ -1393,6 +1475,7 @@ def send_message(
         created_at=msg.created_at,
         read_at=msg.read_at,
         mine=True,
+        attachment=_attachment_out(doc),
     )
 
 

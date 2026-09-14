@@ -1028,16 +1028,32 @@ async def document_url(
     db: Session = Depends(get_db),
     current_user: models.User = Depends(get_current_user),
 ):
-    """Time-limited download link for one of the caller's own documents."""
-    doc = (
-        db.query(models.Document)
-        .filter(
-            models.Document.id == doc_id,
-            models.Document.user_id == current_user.id,  # ownership check
-        )
-        .first()
-    )
+    """Time-limited download link.
+
+    Normally the caller's own document. If it was sent as a chat attachment,
+    the other participant in that thread can open it too - see
+    Document.message_id.
+    """
+    doc = db.query(models.Document).filter(models.Document.id == doc_id).first()
     if not doc:
+        raise HTTPException(status_code=404, detail="Document not found.")
+
+    allowed = doc.user_id == current_user.id
+    if not allowed and doc.message_id is not None:
+        allowed = (
+            db.query(models.ChatParticipant)
+            .join(
+                models.ChatMessage,
+                models.ChatMessage.thread_id == models.ChatParticipant.thread_id,
+            )
+            .filter(
+                models.ChatMessage.id == doc.message_id,
+                models.ChatParticipant.user_id == current_user.id,
+            )
+            .first()
+            is not None
+        )
+    if not allowed:
         raise HTTPException(status_code=404, detail="Document not found.")
 
     try:
