@@ -28,10 +28,21 @@ export default function Navbar() {
           {user ? (
             <>
               <Link to="/ask" className="btn btn-ghost">Ask a question</Link>
-              <span className="user-chip">
+              {/* The chip was a <span>, which is why it looked clickable but
+                  wasn't - /profile existed and was reachable from the app
+                  shell's nav rail, just never from the marketing header. A
+                  Link keeps the identical look (the global `a` rule inherits
+                  colour and drops underlines) while making it a real target,
+                  keyboard-focusable and openable in a new tab. */}
+              <Link
+                to="/profile"
+                className="user-chip"
+                aria-label="Open your profile"
+                title="Your profile"
+              >
                 <span className="avatar">{user.name?.[0]?.toUpperCase() || 'U'}</span>
-                {user.name.split(' ')[0]}
-              </span>
+                {user.name?.split(' ')[0] || 'Profile'}
+              </Link>
               <button className="btn btn-ghost" onClick={handleLogout}>Log out</button>
             </>
           ) : (

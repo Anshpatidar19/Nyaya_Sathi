@@ -612,6 +612,13 @@ def to_docx(
     retrieval again - so the download can never drift from what was shown
     and reviewed on screen. Returns a BytesIO positioned at the start,
     ready to stream straight back as a response body.
+
+    Only the title and body are written. `citations`, `missing_information`
+    and `notes` are accepted so the call site stays unchanged, but are
+    deliberately not rendered: the download is the filing-ready document,
+    and "Still needed" / "Notes" / "Statutory basis" are review aids that
+    belong on screen, not inside a document handed to a commission. The UI
+    still shows all three from the same draft payload.
     """
     try:
         import docx
@@ -627,23 +634,6 @@ def to_docx(
     # into one paragraph would lose the structure the draft was written in.
     for line in (body or "").split("\n"):
         document.add_paragraph(line)
-
-    if missing_information:
-        document.add_heading("Still needed", level=2)
-        for item in missing_information:
-            document.add_paragraph(str(item), style="List Bullet")
-
-    if notes:
-        document.add_heading("Notes", level=2)
-        for item in notes:
-            document.add_paragraph(str(item), style="List Bullet")
-
-    if citations:
-        document.add_heading("Statutory basis", level=2)
-        for c in citations:
-            name = (c or {}).get("title") or ""
-            source = (c or {}).get("source") or ""
-            document.add_paragraph(f"{name} — {source}" if source else name, style="List Bullet")
 
     buf = io.BytesIO()
     document.save(buf)

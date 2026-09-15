@@ -162,12 +162,12 @@ export default function Landing() {
             <p className="section-sub">Every feature is built around the same rule: the person asking never has to read a statute, a judgment, or a court filing to understand what's happening to them.</p>
           </div>
           <div className="feature-grid">
-            <FeatureCard icon="🗣️" title="Ask in your own language" text="Type or speak in English, Hindi, or a regional language. The platform detects your state so answers reflect local amendments, not just central law." />
-            <FeatureCard icon="📄" title="Read your notice for you" text="Photograph a court notice, police summons, or rent agreement. It's read, explained in simple terms, and any deadline is called out clearly." />
-            <FeatureCard icon="✅" title="Tells you what to do next" text='Not dense analysis — a short, ordered checklist. "Send a notice within 15 days" instead of a paragraph explaining why.' />
-            <FeatureCard icon="🛡️" title="Redacts before it reads" text="Names, phone numbers, and ID numbers in an uploaded document are removed automatically before anything reaches the AI model." />
-            <FeatureCard icon="📝" title="Drafts the basic paperwork" text="Consumer complaints, RTI applications, and standard notices, generated in the right format and filled in with your details." />
-            <FeatureCard icon="⚖️" title="Names the law, not the file" text='Answers cite the broad act — "the Consumer Protection Act, 2019" — never an internal document ID or a direct quote from the source text.' />
+            <FeatureCard icon={<IconLanguages />} title="Ask in your own language" text="Type or speak in English, Hindi, or a regional language. The platform detects your state so answers reflect local amendments, not just central law." />
+            <FeatureCard icon={<IconScanText />} title="Read your notice for you" text="Photograph a court notice, police summons, or rent agreement. It's read, explained in simple terms, and any deadline is called out clearly." />
+            <FeatureCard icon={<IconChecklist />} title="Tells you what to do next" text='Not dense analysis — a short, ordered checklist. "Send a notice within 15 days" instead of a paragraph explaining why.' />
+            <FeatureCard icon={<IconShieldCheck />} title="Redacts before it reads" text="Names, phone numbers, and ID numbers in an uploaded document are removed automatically before anything reaches the AI model." />
+            <FeatureCard icon={<IconFilePen />} title="Drafts the basic paperwork" text="Consumer complaints, RTI applications, and standard notices, generated in the right format and filled in with your details." />
+            <FeatureCard icon={<IconScale />} title="Names the law, not the file" text='Answers cite the broad act — "the Consumer Protection Act, 2019" — never an internal document ID or a direct quote from the source text.' />
           </div>
         </div>
       </section>
@@ -252,6 +252,104 @@ export default function Landing() {
         </div>
       </section>
     </main>
+  );
+}
+
+// Feature icons. Hand-written stroke SVGs rather than emoji: emoji render as
+// a different colourful glyph on every OS, which is the one thing that makes
+// an otherwise clean grid look unfinished. These inherit the accent colour, so
+// they follow the dark theme without a second set of assets, and they need no
+// icon package added to the dependency list.
+//
+// Shared wrapper keeps every icon on the same grid, weight, and cap style -
+// mixing stroke widths across six cards is what usually reads as "off".
+function Icon({ children }) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      width="21"
+      height="21"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.75"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+      focusable="false"
+      style={{ color: 'var(--accent)' }}
+    >
+      {children}
+    </svg>
+  );
+}
+
+function IconLanguages() {
+  return (
+    <Icon>
+      <path d="m5 8 6 6" />
+      <path d="m4 14 6-6 2-3" />
+      <path d="M2 5h12" />
+      <path d="M7 2h1" />
+      <path d="m22 22-5-10-5 10" />
+      <path d="M14 18h6" />
+    </Icon>
+  );
+}
+
+function IconScanText() {
+  return (
+    <Icon>
+      <path d="M3 7V5a2 2 0 0 1 2-2h2" />
+      <path d="M17 3h2a2 2 0 0 1 2 2v2" />
+      <path d="M21 17v2a2 2 0 0 1-2 2h-2" />
+      <path d="M7 21H5a2 2 0 0 1-2-2v-2" />
+      <path d="M7 8h10" />
+      <path d="M7 12h10" />
+      <path d="M7 16h6" />
+    </Icon>
+  );
+}
+
+function IconChecklist() {
+  return (
+    <Icon>
+      <path d="m3 7 2 2 4-4" />
+      <path d="m3 17 2 2 4-4" />
+      <path d="M13 6h8" />
+      <path d="M13 12h8" />
+      <path d="M13 18h8" />
+    </Icon>
+  );
+}
+
+function IconShieldCheck() {
+  return (
+    <Icon>
+      <path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z" />
+      <path d="m9 12 2 2 4-4" />
+    </Icon>
+  );
+}
+
+function IconFilePen() {
+  return (
+    <Icon>
+      <path d="M12.5 22H6a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h8.5L20 7.5v3.5" />
+      <path d="M14 2v6h6" />
+      <path d="M13.4 15.6a1 1 0 1 0-3-3l-5 5a2 2 0 0 0-.5.86l-.84 2.87a.5.5 0 0 0 .62.62l2.87-.84a2 2 0 0 0 .85-.5z" />
+    </Icon>
+  );
+}
+
+function IconScale() {
+  return (
+    <Icon>
+      <path d="m16 16 3-8 3 8c-.87.65-1.92 1-3 1s-2.13-.35-3-1" />
+      <path d="m2 16 3-8 3 8c-.87.65-1.92 1-3 1s-2.13-.35-3-1" />
+      <path d="M7 21h10" />
+      <path d="M12 3v18" />
+      <path d="M3 7h2c2 0 5-1 7-2 2 1 5 2 7 2h2" />
+    </Icon>
   );
 }
 
