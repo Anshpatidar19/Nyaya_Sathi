@@ -168,6 +168,10 @@ export default function Landing() {
             <FeatureCard icon={<IconShieldCheck />} title="Redacts before it reads" text="Names, phone numbers, and ID numbers in an uploaded document are removed automatically before anything reaches the AI model." />
             <FeatureCard icon={<IconFilePen />} title="Drafts the basic paperwork" text="Consumer complaints, RTI applications, and standard notices, generated in the right format and filled in with your details." />
             <FeatureCard icon={<IconScale />} title="Names the law, not the file" text='Answers cite the broad act — "the Consumer Protection Act, 2019" — never an internal document ID or a direct quote from the source text.' />
+            <FeatureCard icon={<IconUserSearch />} title="Finds your advocate, matched" text="Describe your situation and get a ranked shortlist by practice area, location, and language — with the reason behind every match shown, not just a score." />
+            <FeatureCard icon={<IconGavel />} title="Builds the case for your advocate" text="For advocates: give a matter's facts and get grounded primary arguments, the likely opposing case, and rebuttals — cited to the same statutes and judgments, never invented." />
+            <FeatureCard icon={<IconCalendarClock />} title="Tracks every matter in one place" text="Case files, hearing dates, notes, and research stay together per matter, with a calendar view so no deadline gets missed." />
+            <FeatureCard icon={<IconMessageCircle />} title="Connect and message advocates directly" text="Send a connection request, then chat securely once it's accepted — no phone number exchanged, nothing lost across channels." />
           </div>
         </div>
       </section>
@@ -349,6 +353,51 @@ function IconScale() {
       <path d="M7 21h10" />
       <path d="M12 3v18" />
       <path d="M3 7h2c2 0 5-1 7-2 2 1 5 2 7 2h2" />
+    </Icon>
+  );
+}
+
+function IconUserSearch() {
+  return (
+    <Icon>
+      <circle cx="10" cy="8" r="5" />
+      <path d="M2 21a8 8 0 0 1 10.434-7.62" />
+      <circle cx="17" cy="17" r="3" />
+      <path d="m21 21-1.9-1.9" />
+    </Icon>
+  );
+}
+
+function IconGavel() {
+  return (
+    <Icon>
+      <path d="m14.5 12.5-8 8a2.119 2.119 0 1 1-3-3l8-8" />
+      <path d="m16 16 6-6" />
+      <path d="m8 8 6-6" />
+      <path d="m9 7 8 8" />
+      <path d="m21 11-8-8" />
+    </Icon>
+  );
+}
+
+function IconCalendarClock() {
+  return (
+    <Icon>
+      <path d="M21 7.5V6a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h3.5" />
+      <path d="M16 2v4" />
+      <path d="M8 2v4" />
+      <path d="M3 10h18" />
+      <circle cx="18" cy="18" r="4" />
+      <path d="M18 16.5v1.5l1 1" />
+    </Icon>
+  );
+}
+
+function IconMessageCircle() {
+  return (
+    <Icon>
+      <path d="M14 9a2 2 0 0 1-2 2H6l-4 4V4a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2z" />
+      <path d="M18 9h2a2 2 0 0 1 2 2v11l-4-4h-6a2 2 0 0 1-2-2v-1" />
     </Icon>
   );
 }
