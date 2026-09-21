@@ -8,6 +8,7 @@ import {
   sendConnectionRequest,
 } from '../networkApi';
 import { NetworkPage, refreshBadges } from '../components/AppShell';
+import AdvocateBot from '../components/AdvocateBot';
 import {
   Avatar,
   Chips,
@@ -183,6 +184,27 @@ export default function Advocates() {
 
   return (
     <NetworkPage active="advocates">
+      {/* The assistant. Self-contained - it renders its own launcher and
+          panel - and it reuses this page's connect dialog and navigation,
+          so a connection started from a recommendation is the same
+          connection as one started from a card in the grid. Advocates do
+          not see it: it exists to help a client find counsel. */}
+      {!isAdvocate && (
+        <AdvocateBot
+          token={token}
+          onViewProfile={(id) => navigate(`/advocates/${id}`)}
+          onConnect={(user, connection) => {
+            if (connection?.status === 'accepted') {
+              navigate(
+                connection.thread_id ? `/messages/${connection.thread_id}` : '/messages'
+              );
+            } else {
+              setDialogFor(user);
+            }
+          }}
+        />
+      )}
+
       {dialogFor && (
         <ConnectDialog
           advocate={dialogFor}

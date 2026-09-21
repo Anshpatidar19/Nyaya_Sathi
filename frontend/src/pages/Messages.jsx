@@ -17,6 +17,7 @@ import {
   postMessage,
 } from '../networkApi';
 import { NetworkPage, refreshBadges } from '../components/AppShell';
+import { useDocIntel } from '../components/DocIntel';
 import {
   Avatar,
   DemoBadge,
@@ -251,7 +252,7 @@ function ThreadList() {
 /* ---------------------------------------------------------- conversation */
 
 function Conversation({ threadId }) {
-  const { token } = useAuth();
+  const { token, isAdvocate } = useAuth();
   const navigate = useNavigate();
 
   const [meta, setMeta] = useState(null);
@@ -438,6 +439,36 @@ function Conversation({ threadId }) {
     el.style.height = `${Math.min(el.scrollHeight, 176)}px`;
   }
 
+  /* Where a suggested question lands. It goes into the composer rather than
+     being sent, because the advocate should read and edit it first - an AI
+     question fired straight at a client is exactly the thing this feature
+     is not. Appends rather than replaces, so selecting three questions and
+     then a fourth doesn't discard the first three. */
+  const insertIntoDraft = useCallback((text) => {
+    if (!text) return;
+    setDraft((prev) => (prev.trim() ? `${prev.trimEnd()}\n\n${text}` : text));
+    // Defer: the textarea has to hold the new value before its scrollHeight
+    // means anything.
+    requestAnimationFrame(() => {
+      const el = textRef.current;
+      if (!el) return;
+      el.focus();
+      el.setSelectionRange(el.value.length, el.value.length);
+      el.style.height = 'auto';
+      el.style.height = `${Math.min(el.scrollHeight, 176)}px`;
+    });
+  }, []);
+
+  /* AI document intelligence. Advocate-only, and it owns all of its own
+     state - this page hands it the thread and a way into the composer, and
+     otherwise carries three lines of JSX for it. */
+  const intel = useDocIntel({
+    token,
+    threadId,
+    enabled: isAdvocate,
+    onInsertText: insertIntoDraft,
+  });
+
   /* Precomputed so the render stays declarative: which messages start a new
      day, and which start a new group from the same sender. */
   const rows = useMemo(
@@ -480,180 +511,197 @@ function Conversation({ threadId }) {
   }
 
   return (
-    <div className="nx-chat">
-      <header className="nx-chat-head">
-        <div className="nx-chat-head-inner">
-          <button
-            type="button"
-            className="nx-chat-back"
-            onClick={() => navigate('/messages')}
-            aria-label="Back to conversations"
-          >
-            <svg viewBox="0 0 20 20" fill="none" stroke="currentColor"
-                 strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M11.5 5 6.5 10l5 5" />
-            </svg>
-          </button>
-          {!other ? (
-            /* Until the thread loads there is nothing true to say about who
-               is on the other end. This used to fall back to "Conversation"
-               and "Member" with a "U" avatar, which named a real person
-               wrongly for a moment on every open. */
-            <div className="nx-chat-head-skel">
-              <span className="skel-ic" />
-              <span className="skel-body">
-                <span className="skel-line w40" />
-                <span className="skel-line w60" />
-              </span>
-            </div>
-          ) : (
-            <>
-              <Avatar user={other} size={40} />
-              <div className="nx-chat-ident">
-                <div className="nx-chat-name">
-                  <strong>{other.name}</strong>
-                  <DemoBadge user={other} />
-                </div>
-                <div className="nx-chat-role">
-                  {other.role === 'advocate' ? 'Advocate' : 'Member'}
-                  {spec && (
-                    <>
-                      <span className="nx-dot">&middot;</span>
-                      {spec}
-                    </>
-                  )}
-                </div>
-              </div>
-              {other.role === 'advocate' && (
-                <Link className="btn btn-ghost sm" to={`/advocates/${other.id}`}>
-                  Profile
-                </Link>
-              )}
-            </>
-          )}
-        </div>
-      </header>
-
-      <div className="nx-chat-scroll" ref={scrollRef} onScroll={onScroll}>
-        <div className="nx-chat-stream">
-          {loading ? (
-            <div className="nx-chat-loading">Loading conversation&hellip;</div>
-          ) : rows.length === 0 ? (
-            <div className="nx-chat-intro">
-              <h4>You&rsquo;re connected</h4>
-              <p>
-                Explain what happened, when it started, who is involved and
-                where. Mention whether an FIR, notice or case has already been
-                filed, and what help you are looking for.
-              </p>
-            </div>
-          ) : (
-            rows.map((m) => (
-              <div key={m.id}>
-                {m.newDay && (
-                  <div className="nx-chat-day">
-                    <span>{dayLabel(m.created_at)}</span>
-                  </div>
-                )}
-                <div
-                  className={`nx-msg ${m.mine ? 'mine' : ''} ${
-                    m.grouped ? 'grouped' : ''
-                  }`}
-                >
-                  <div className="nx-msg-bubble">
-                    {m.attachment && <AttachmentCard attachment={m.attachment} token={token} />}
-                    {m.content && <span className="nx-msg-text">{m.content}</span>}
-                    <span className="nx-msg-time">
-                      {clockTime(m.created_at)}
-                      {m.mine && m.read_at && (
-                        <span className="nx-msg-read" title="Read">
-                          &#10003;&#10003;
-                        </span>
-                      )}
-                    </span>
-                  </div>
-                </div>
-              </div>
-            ))
-          )}
-        </div>
-      </div>
-
-      {/* The SAME composer as Ask / Draft / Review / Arguments - literally the
-          same classes from styles.css (.ask-form-dock > .ask-dock-row >
-          .dock-box > .dock-input + .dock-send), not a copy of their values.
-          Reusing them is what guarantees the box stays identical everywhere
-          instead of drifting the next time either side is touched. Only the
-          placeholder differs by context. */}
-      <form
-        className="ask-form-dock nx-dock"
-        onSubmit={(e) => {
-          e.preventDefault();
-          send();
-        }}
-      >
-        <div className="ask-dock-row">
-          {sendError && <div className="form-error nx-dock-error">{sendError}</div>}
-          {attachment && (
-            <div className="attach-chip">
-              <span className="attach-chip-ic">{FileIcon}</span>
-              <span className="attach-chip-name">{attachment.filename}</span>
-              <button
-                type="button"
-                className="attach-chip-x"
-                onClick={clearAttachment}
-                aria-label="Remove attachment"
-              >
-                ×
-              </button>
-            </div>
-          )}
-          <div className="dock-box">
-            <input
-              ref={fileInputRef}
-              type="file"
-              accept={ACCEPT}
-              onChange={handleFilePicked}
-              style={{ display: 'none' }}
-            />
+    /* A row: conversation, then the AI panel when one is open. The chat
+       keeps its own scroll and keeps polling while the panel is up - that
+       is the difference between a workspace and a modal. */
+    <div className="di-shell">
+      <div className="nx-chat">
+        <header className="nx-chat-head">
+          <div className="nx-chat-head-inner">
             <button
               type="button"
-              className="attach-btn"
-              onClick={() => fileInputRef.current?.click()}
-              disabled={uploading || sending || !!attachment}
-              title="Attach a document"
-              aria-label="Attach a document"
+              className="nx-chat-back"
+              onClick={() => navigate('/messages')}
+              aria-label="Back to conversations"
             >
-              {uploading ? <span className="spinner spinner-dark" /> : ClipIcon}
+              <svg viewBox="0 0 20 20" fill="none" stroke="currentColor"
+                   strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M11.5 5 6.5 10l5 5" />
+              </svg>
             </button>
-            <textarea
-              ref={textRef}
-              className="dock-input"
-              rows={1}
-              maxLength={MAX_CHARS}
-              value={draft}
-              onChange={onInput}
-              onKeyDown={onKeyDown}
-              placeholder={attachment ? 'Add a caption\u2026 (optional)' : 'Type your message\u2026'}
-              aria-label="Message"
-            />
-            {/* Only surfaces when the limit is actually in reach. */}
-            {draft.length > MAX_CHARS - 500 && (
-              <span className="nx-dock-count">
-                {draft.length}/{MAX_CHARS}
-              </span>
+            {!other ? (
+              /* Until the thread loads there is nothing true to say about who
+                 is on the other end. This used to fall back to "Conversation"
+                 and "Member" with a "U" avatar, which named a real person
+                 wrongly for a moment on every open. */
+              <div className="nx-chat-head-skel">
+                <span className="skel-ic" />
+                <span className="skel-body">
+                  <span className="skel-line w40" />
+                  <span className="skel-line w60" />
+                </span>
+              </div>
+            ) : (
+              <>
+                <Avatar user={other} size={40} />
+                <div className="nx-chat-ident">
+                  <div className="nx-chat-name">
+                    <strong>{other.name}</strong>
+                    <DemoBadge user={other} />
+                  </div>
+                  <div className="nx-chat-role">
+                    {other.role === 'advocate' ? 'Advocate' : 'Member'}
+                    {spec && (
+                      <>
+                        <span className="nx-dot">&middot;</span>
+                        {spec}
+                      </>
+                    )}
+                  </div>
+                </div>
+                {other.role === 'advocate' && (
+                  <Link className="btn btn-ghost sm" to={`/advocates/${other.id}`}>
+                    Profile
+                  </Link>
+                )}
+              </>
             )}
-            <button
-              className="dock-send"
-              type="submit"
-              disabled={sending || uploading || (!draft.trim() && !attachment)}
-              aria-label="Send message"
-            >
-              {sending ? <span className="spinner" /> : 'Send'}
-            </button>
+          </div>
+        </header>
+
+        <div className="nx-chat-scroll" ref={scrollRef} onScroll={onScroll}>
+          <div className="nx-chat-stream">
+            {loading ? (
+              <div className="nx-chat-loading">Loading conversation&hellip;</div>
+            ) : rows.length === 0 ? (
+              <div className="nx-chat-intro">
+                <h4>You&rsquo;re connected</h4>
+                <p>
+                  Explain what happened, when it started, who is involved and
+                  where. Mention whether an FIR, notice or case has already been
+                  filed, and what help you are looking for.
+                </p>
+              </div>
+            ) : (
+              rows.map((m) => (
+                <div key={m.id}>
+                  {m.newDay && (
+                    <div className="nx-chat-day">
+                      <span>{dayLabel(m.created_at)}</span>
+                    </div>
+                  )}
+                  <div
+                    className={`nx-msg ${m.mine ? 'mine' : ''} ${
+                      m.grouped ? 'grouped' : ''
+                    }`}
+                  >
+                    <div className="nx-msg-bubble">
+                      {m.attachment && (
+                        <div className="di-attach-row">
+                          <AttachmentCard attachment={m.attachment} token={token} />
+                          {intel.menuFor(m.attachment)}
+                        </div>
+                      )}
+                      {m.content && <span className="nx-msg-text">{m.content}</span>}
+                      <span className="nx-msg-time">
+                        {clockTime(m.created_at)}
+                        {m.mine && m.read_at && (
+                          <span className="nx-msg-read" title="Read">
+                            &#10003;&#10003;
+                          </span>
+                        )}
+                      </span>
+                    </div>
+                  </div>
+                  {/* The analysis belongs to THIS message, so it renders
+                      under it in the stream rather than being sent into the
+                      conversation as a message of its own - which would put
+                      the advocate's working notes in front of the client. */}
+                  {m.attachment && intel.cardFor(m.attachment)}
+                </div>
+              ))
+            )}
           </div>
         </div>
-      </form>
+
+        {/* The SAME composer as Ask / Draft / Review / Arguments - literally the
+            same classes from styles.css (.ask-form-dock > .ask-dock-row >
+            .dock-box > .dock-input + .dock-send), not a copy of their values.
+            Reusing them is what guarantees the box stays identical everywhere
+            instead of drifting the next time either side is touched. Only the
+            placeholder differs by context. */}
+        <form
+          className="ask-form-dock nx-dock"
+          onSubmit={(e) => {
+            e.preventDefault();
+            send();
+          }}
+        >
+          <div className="ask-dock-row">
+            {sendError && <div className="form-error nx-dock-error">{sendError}</div>}
+            {attachment && (
+              <div className="attach-chip">
+                <span className="attach-chip-ic">{FileIcon}</span>
+                <span className="attach-chip-name">{attachment.filename}</span>
+                <button
+                  type="button"
+                  className="attach-chip-x"
+                  onClick={clearAttachment}
+                  aria-label="Remove attachment"
+                >
+                  ×
+                </button>
+              </div>
+            )}
+            <div className="dock-box">
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept={ACCEPT}
+                onChange={handleFilePicked}
+                style={{ display: 'none' }}
+              />
+              <button
+                type="button"
+                className="attach-btn"
+                onClick={() => fileInputRef.current?.click()}
+                disabled={uploading || sending || !!attachment}
+                title="Attach a document"
+                aria-label="Attach a document"
+              >
+                {uploading ? <span className="spinner spinner-dark" /> : ClipIcon}
+              </button>
+              <textarea
+                ref={textRef}
+                className="dock-input"
+                rows={1}
+                maxLength={MAX_CHARS}
+                value={draft}
+                onChange={onInput}
+                onKeyDown={onKeyDown}
+                placeholder={attachment ? 'Add a caption\u2026 (optional)' : 'Type your message\u2026'}
+                aria-label="Message"
+              />
+              {/* Only surfaces when the limit is actually in reach. */}
+              {draft.length > MAX_CHARS - 500 && (
+                <span className="nx-dock-count">
+                  {draft.length}/{MAX_CHARS}
+                </span>
+              )}
+              <button
+                className="dock-send"
+                type="submit"
+                disabled={sending || uploading || (!draft.trim() && !attachment)}
+                aria-label="Send message"
+              >
+                {sending ? <span className="spinner" /> : 'Send'}
+              </button>
+            </div>
+          </div>
+        </form>
+      </div>
+
+      {intel.panel}
     </div>
   );
 }

@@ -1,0 +1,212 @@
+/* The answer card while it is still being produced.
+
+   Imported by pages/Ask.jsx so it travels with the thing it styles.
+
+   The design rule this follows: every moving part corresponds to something
+   that is actually happening. There are exactly two states, and the app
+   can tell them apart honestly -
+
+     Researching   nothing has streamed yet, so retrieval and the model's
+                   own reasoning are still running
+     Writing       the first token has arrived, so prose is coming
+
+   What is deliberately NOT here is a fake stage ticker cycling through
+   "Searching statutes... Reading judgments... Cross-checking citations".
+   The stream carries no stage events, so those labels would be invented -
+   and a product whose whole argument is that its confidence badge comes
+   from real retrieval signals cannot afford a progress bar that lies.
+
+   Every animation is disabled under prefers-reduced-motion at the bottom. */
+
+/* The card gains a hairline rail along its top edge while work is in
+   flight. Indeterminate on purpose: the backend cannot say how far along
+   it is, so a bar that filled to 80% would be inventing a number. */
+.think-card { position: relative; overflow: hidden; }
+
+.think-rail {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 2px;
+  background: linear-gradient(
+    90deg,
+    transparent,
+    var(--accent) 35%,
+    var(--accent-dark) 50%,
+    var(--accent) 65%,
+    transparent
+  );
+  background-size: 40% 100%;
+  background-repeat: no-repeat;
+  animation: think-rail 1.5s cubic-bezier(.45, 0, .55, 1) infinite;
+}
+@keyframes think-rail {
+  0%   { background-position: -45% 0; }
+  100% { background-position: 145% 0; }
+}
+
+/* ---------- the status pill ---------- */
+
+.think-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 11px 4px 8px;
+  border: 1px solid var(--mint-line);
+  border-radius: 999px;
+  background: var(--mint);
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--accent-dark);
+}
+
+/* A breathing dot with a ring pushing out of it - reads as "working"
+   without the mechanical rotation of a spinner. */
+.think-orb {
+  position: relative;
+  width: 8px;
+  height: 8px;
+  flex-shrink: 0;
+  border-radius: 50%;
+  background: var(--accent);
+}
+.think-orb::after {
+  content: '';
+  position: absolute;
+  inset: -4px;
+  border-radius: 50%;
+  border: 1.5px solid var(--accent);
+  opacity: 0;
+  animation: think-ping 1.8s cubic-bezier(.3, 0, .2, 1) infinite;
+}
+@keyframes think-ping {
+  0%   { transform: scale(.55); opacity: .7; }
+  70%  { transform: scale(1.25); opacity: 0; }
+  100% { transform: scale(1.25); opacity: 0; }
+}
+
+/* The label itself carries a slow highlight sweep, so the pill stays alive
+   even when nothing else on screen has changed for six seconds. */
+.think-label {
+  background: linear-gradient(
+    90deg,
+    var(--accent-dark) 0%,
+    var(--accent-dark) 35%,
+    var(--ink) 50%,
+    var(--accent-dark) 65%,
+    var(--accent-dark) 100%
+  );
+  background-size: 220% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  animation: think-sweep 2.6s linear infinite;
+}
+@keyframes think-sweep {
+  0%   { background-position: 120% 0; }
+  100% { background-position: -20% 0; }
+}
+
+/* Elapsed seconds, and only after the wait is long enough to feel like a
+   hang. Before that it is noise; after it, it is the difference between
+   "slow" and "broken". */
+.think-secs {
+  padding-left: 7px;
+  margin-left: 1px;
+  border-left: 1px solid var(--mint-line);
+  font-variant-numeric: tabular-nums;
+  color: var(--ink-faint);
+  font-weight: 600;
+}
+
+.think-pill.is-writing { background: var(--accent-soft); }
+
+/* ---------- skeleton ----------
+   Shown only before the first token. Once prose is streaming the real text
+   replaces it, because a skeleton sitting under live text is decoration
+   pretending to be content. */
+
+.think-skeleton {
+  display: flex;
+  flex-direction: column;
+  gap: 11px;
+  padding: 4px 0 6px;
+}
+.think-skeleton span {
+  display: block;
+  height: 11px;
+  border-radius: 6px;
+  background: linear-gradient(
+    90deg,
+    var(--line) 0%,
+    var(--mint) 45%,
+    var(--line) 90%
+  );
+  background-size: 220% 100%;
+  animation: think-sweep 1.9s linear infinite;
+}
+/* Staggered, so the lines do not pulse in lockstep - that reads as a
+   loading graphic, whereas an offset reads as text arriving. */
+.think-skeleton span:nth-child(2) { animation-delay: .12s; }
+.think-skeleton span:nth-child(3) { animation-delay: .24s; }
+.think-skeleton span:nth-child(4) { animation-delay: .36s; }
+.think-skeleton span:nth-child(5) { animation-delay: .48s; }
+
+/* A gap between the two "paragraphs" of the skeleton, so the shape it
+   suggests is an answer rather than a list. */
+.think-skeleton .think-gap { height: 5px; background: none; animation: none; }
+
+/* ---------- streaming text ---------- */
+
+/* Caret on the last paragraph only, so the reader's eye has somewhere to
+   sit while text arrives. */
+.think-caret::after {
+  content: '';
+  display: inline-block;
+  width: 2px;
+  height: 1em;
+  margin-left: 2px;
+  vertical-align: -0.15em;
+  background: var(--accent);
+  animation: think-blink 1.05s steps(2, start) infinite;
+}
+@keyframes think-blink {
+  0%, 50%   { opacity: 1; }
+  50.01%, 100% { opacity: 0; }
+}
+
+/* Each paragraph fades up as it lands rather than snapping in. */
+.think-para { animation: think-rise .32s cubic-bezier(.2, .7, .3, 1) both; }
+@keyframes think-rise {
+  from { opacity: 0; transform: translateY(4px); }
+  to   { opacity: 1; transform: none; }
+}
+
+/* Announced to screen readers, which get none of the above. */
+.think-sr {
+  position: absolute;
+  width: 1px; height: 1px;
+  margin: -1px; padding: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .think-rail,
+  .think-orb::after,
+  .think-label,
+  .think-skeleton span,
+  .think-caret::after,
+  .think-para {
+    animation: none;
+  }
+  .think-label {
+    -webkit-text-fill-color: var(--accent-dark);
+    background: none;
+  }
+  .think-rail { background: var(--accent); opacity: .5; }
+  .think-caret::after { opacity: 1; }
+}

@@ -14,14 +14,22 @@ const AuthContext = createContext(null);
 // else's, on a shared browser.
 export const ACTIVE_CONVERSATION_KEY = 'ns_active_conversation';
 
+// The Find an Advocate assistant's thread. Same reasoning as above, and
+// more pointedly: what someone asks it is a description of their legal
+// problem. That survives a trip to an advocate's profile and back, and it
+// dies with the tab and with the session - never localStorage.
+export const ADVOCATE_BOT_KEY = 'ns_advocate_bot';
+
 // Signing in or out starts a clean slate. localStorage is swept too, to clear
 // the key left behind by builds that stored it there.
 function clearActiveConversation() {
-  try {
-    sessionStorage.removeItem(ACTIVE_CONVERSATION_KEY);
-    localStorage.removeItem(ACTIVE_CONVERSATION_KEY);
-  } catch (_) {
-    /* private mode, storage disabled - nothing to clear */
+  for (const key of [ACTIVE_CONVERSATION_KEY, ADVOCATE_BOT_KEY]) {
+    try {
+      sessionStorage.removeItem(key);
+      localStorage.removeItem(key);
+    } catch (_) {
+      /* private mode, storage disabled - nothing to clear */
+    }
   }
 }
 

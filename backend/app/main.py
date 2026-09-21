@@ -23,6 +23,7 @@ from sqlalchemy.orm import Session, joinedload
 
 from . import (
     arguments,
+    doc_intel,
     doc_scope,
     drafting,
     gemini,
@@ -38,6 +39,8 @@ from . import (
 from .auth import ensure_profile, get_current_user, require_advocate
 from .matters_api import router as matters_router
 from .network_api import router as network_router
+from .doc_intel_api import router as doc_intel_router
+from .advocate_bot_api import router as advocate_bot_router
 from .config import settings
 from .database import Base, SessionLocal, engine, get_db
 from fastapi.responses import StreamingResponse
@@ -147,6 +150,7 @@ async def shutdown_clients():
     """Close the keep-alive pools so reload and restart are clean."""
     await gemini.close_client()
     await kanoon.close_client()
+    await doc_intel.close_client()
     global _blob_client
     if _blob_client is not None and not _blob_client.is_closed:
         await _blob_client.aclose()
@@ -193,6 +197,13 @@ app.include_router(matters_router)
 # Everything it owns is under /network, so it cannot collide with the AI
 # surface's /conversations or /documents routes.
 app.include_router(network_router)
+# AI document intelligence for files shared in a chat thread. Under
+# /network/threads/{id}/documents/{id}/..., so it lives with the chat it
+# serves without adding another feature to network_api.py.
+app.include_router(doc_intel_router)
+# The Find an Advocate assistant. Registered after the network router so
+# /network/advocates/recommend sits beside the directory it searches.
+app.include_router(advocate_bot_router)
 
 
 @app.get("/health")

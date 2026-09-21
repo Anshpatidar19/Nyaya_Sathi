@@ -1,0 +1,524 @@
+/* AI document intelligence in the advocate-client chat.
+
+   Imported by components/DocIntel.jsx rather than from main.jsx, so the
+   feature's styles arrive with the feature and network.css stays the file
+   about the network surface.
+
+   Nothing here defines a colour. Everything is --ink, --line, --accent,
+   --mint and friends from styles.css, which is what makes the panel follow
+   the dark theme without a second set of rules.
+
+   The prefix is di- throughout so it cannot collide with nx- (network) or
+   ask- (AI surface). */
+
+/* ---------- layout: chat + panel ----------
+   A row, not an overlay. The panel takes width from the conversation and
+   the conversation keeps polling behind it - reading the chat while
+   working through the questions is the whole point. */
+
+.di-shell {
+  display: flex;
+  height: 100%;
+  min-height: 0;
+}
+.di-shell > .nx-chat {
+  flex: 1;
+  min-width: 0;
+}
+
+.di-panel {
+  flex-shrink: 0;
+  width: 420px;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  border-left: 1px solid var(--line);
+  background: var(--surface);
+}
+
+.di-panel-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 13px 14px 12px 18px;
+  border-bottom: 1px solid var(--line);
+}
+.di-panel-ident { flex: 1; min-width: 0; }
+.di-panel-ident strong {
+  display: block;
+  font-size: 14px;
+  letter-spacing: -0.01em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.di-panel-eyebrow {
+  display: flex; align-items: center; gap: 5px;
+  margin-bottom: 3px;
+  font-size: 10.5px; font-weight: 700; letter-spacing: .07em;
+  text-transform: uppercase; color: var(--accent);
+}
+.di-panel-eyebrow svg { width: 13px; height: 13px; }
+
+.di-tabs {
+  display: flex;
+  gap: 2px;
+  padding: 0 10px;
+  border-bottom: 1px solid var(--line);
+}
+.di-tab {
+  position: relative;
+  display: flex; align-items: center; gap: 6px;
+  padding: 10px 10px 9px;
+  border: 0; background: transparent;
+  font-family: inherit; font-size: 13px; font-weight: 600;
+  color: var(--ink-faint); cursor: pointer;
+  transition: color .15s;
+}
+.di-tab:hover { color: var(--ink-muted); }
+.di-tab.active { color: var(--accent-dark); }
+.di-tab.active::after {
+  content: '';
+  position: absolute; left: 6px; right: 6px; bottom: -1px; height: 2px;
+  background: var(--accent); border-radius: 2px;
+}
+
+.di-panel-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 16px 18px 26px;
+}
+/* The Ask tab owns its own scrolling (thread above, dock pinned below), so
+   the body must not scroll as well. A class rather than :has(), which is
+   still not safe to depend on for layout. */
+.di-panel-body.flush {
+  overflow: hidden;
+  padding: 0;
+}
+
+/* ---------- attachment row + three-dot menu ----------
+   .nx-attach-card had no rules at all before this feature - a sent file
+   rendered as an unstyled button inside the bubble. The menu needs a real
+   surface to sit against, so the card is given one here. */
+
+.di-attach-row {
+  display: flex;
+  align-items: stretch;
+  gap: 4px;
+}
+.di-attach-row .nx-attach-card { flex: 1; min-width: 0; }
+
+.nx-attach-card {
+  display: flex; align-items: center; gap: 10px;
+  width: 100%; padding: 9px 12px; margin-bottom: 2px;
+  border: 1px solid var(--line); border-radius: 12px;
+  background: var(--bg); color: inherit;
+  font-family: inherit; text-align: left; cursor: pointer;
+  transition: border-color .15s, background .15s;
+}
+.nx-attach-card:hover:not(:disabled) {
+  border-color: var(--accent); background: var(--accent-soft);
+}
+.nx-attach-card:disabled { opacity: .7; cursor: progress; }
+.nx-attach-ic {
+  display: flex; align-items: center; justify-content: center;
+  width: 32px; height: 32px; flex-shrink: 0;
+  border-radius: 9px;
+  background: var(--surface); border: 1px solid var(--line);
+  color: var(--accent-dark);
+}
+.nx-attach-ic svg { width: 17px; height: 17px; }
+.nx-attach-info { display: flex; flex-direction: column; min-width: 0; }
+.nx-attach-name {
+  font-size: 13.5px; font-weight: 600;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.nx-attach-meta { font-size: 11.5px; color: var(--ink-faint); }
+.nx-attach-err { color: var(--danger); }
+
+.di-menu-wrap { position: relative; flex-shrink: 0; }
+.di-menu-btn {
+  display: flex; align-items: center; justify-content: center;
+  width: 28px; height: 100%; min-height: 34px; padding: 0;
+  border: 1px solid transparent; border-radius: 9px;
+  background: transparent; color: var(--ink-faint); cursor: pointer;
+  transition: color .15s, background .15s, border-color .15s;
+}
+.di-menu-btn svg { width: 16px; height: 16px; }
+.di-menu-btn:hover,
+.di-menu-btn.open {
+  color: var(--accent-dark);
+  background: var(--accent-soft);
+  border-color: var(--mint-line);
+}
+.di-menu-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+
+.di-menu {
+  position: absolute; top: calc(100% + 4px); right: 0; z-index: 40;
+  min-width: 232px; padding: 5px;
+  border: 1px solid var(--line); border-radius: var(--radius-s);
+  background: var(--surface); box-shadow: var(--shadow-strong);
+}
+.di-menu-item {
+  display: flex; align-items: center; gap: 10px;
+  width: 100%; padding: 9px 10px;
+  border: 0; border-radius: 8px; background: transparent;
+  font-family: inherit; font-size: 13.5px; font-weight: 500;
+  color: var(--ink); text-align: left; cursor: pointer;
+  transition: background .12s, color .12s;
+}
+.di-menu-item:hover:not(:disabled) { background: var(--mint); color: var(--accent-dark); }
+.di-menu-item:disabled { opacity: .45; cursor: not-allowed; }
+.di-menu-ic { display: flex; color: var(--accent); }
+.di-menu-ic svg { width: 16px; height: 16px; }
+.di-menu-note {
+  padding: 6px 10px 4px;
+  font-size: 11.5px; line-height: 1.5; color: var(--ink-faint);
+}
+
+/* ---------- compact analysis card, inline in the stream ---------- */
+
+.di-card {
+  max-width: min(74%, 560px);
+  /* Follows the message it belongs to, so an analysis of a file the
+     advocate sent sits on the advocate's side. */
+  margin: 2px 0 12px;
+  padding: 11px 13px 12px;
+  border: 1px solid var(--mint-line); border-radius: 14px;
+  background: var(--surface);
+  box-shadow: var(--shadow-soft);
+}
+.nx-msg.mine + .di-card { margin-left: auto; }
+
+.di-card-head {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  margin-bottom: 8px;
+}
+.di-badge {
+  display: inline-flex; align-items: center; gap: 5px;
+  font-size: 10.5px; font-weight: 700; letter-spacing: .06em;
+  text-transform: uppercase; color: var(--accent);
+}
+.di-badge svg { width: 13px; height: 13px; }
+.di-type {
+  padding: 2px 9px; border-radius: 999px;
+  background: var(--mint); border: 1px solid var(--mint-line);
+  font-size: 11.5px; font-weight: 700; color: var(--accent-dark);
+}
+.di-type.lg { font-size: 13px; padding: 3px 11px; }
+.di-conf { font-size: 11px; color: var(--ink-faint); }
+.di-spacer { flex: 1; }
+
+.di-icon-btn {
+  display: flex; align-items: center; justify-content: center;
+  width: 26px; height: 26px; padding: 0; flex-shrink: 0;
+  border: 0; border-radius: 7px; background: transparent;
+  color: var(--ink-faint); cursor: pointer;
+  transition: color .15s, background .15s;
+}
+.di-icon-btn svg { width: 15px; height: 15px; }
+.di-icon-btn:hover { color: var(--accent-dark); background: var(--mint); }
+
+.di-card-summary {
+  margin: 0 0 9px;
+  font-size: 13.5px; line-height: 1.6; color: var(--ink-muted);
+  /* Three lines is enough to know whether to open it. The full text is one
+     click away in the panel; a fifteen-line card would push the
+     conversation off screen. */
+  display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.di-facts {
+  display: flex; flex-wrap: wrap; gap: 4px 14px;
+  margin-bottom: 9px;
+  font-size: 11.5px; font-weight: 600; color: var(--ink-faint);
+}
+
+.di-gap-strip {
+  display: flex; align-items: center; gap: 8px; width: 100%;
+  margin-bottom: 10px; padding: 8px 10px;
+  border: 1px solid var(--amber); border-radius: 10px;
+  background: transparent; color: var(--amber);
+  font-family: inherit; font-size: 12.5px; font-weight: 600;
+  text-align: left; cursor: pointer;
+}
+.di-gap-strip:hover { background: rgba(184, 134, 58, .08); }
+.di-gap-cta { margin-left: auto; text-decoration: underline; white-space: nowrap; }
+.di-gap-ic { display: inline-flex; flex-shrink: 0; }
+.di-gap-ic svg { width: 14px; height: 14px; }
+
+.di-card-actions { display: flex; flex-wrap: wrap; gap: 7px; }
+
+.di-btn {
+  padding: 7px 13px;
+  border: 1px solid var(--line); border-radius: 9px;
+  background: var(--surface); color: var(--ink-muted);
+  font-family: inherit; font-size: 12.5px; font-weight: 600;
+  cursor: pointer;
+  transition: border-color .15s, color .15s, background .15s;
+}
+.di-btn:hover { border-color: var(--accent); color: var(--accent-dark); background: var(--accent-soft); }
+.di-btn.primary {
+  background: var(--accent); border-color: var(--accent); color: var(--on-accent);
+}
+.di-btn.primary:hover { background: var(--accent-dark); border-color: var(--accent-dark); color: var(--on-accent); }
+.di-btn.wide { width: 100%; margin-top: 4px; }
+
+.di-link {
+  padding: 0; border: 0; background: transparent;
+  font-family: inherit; font-size: 12.5px; font-weight: 600;
+  color: var(--accent); cursor: pointer;
+}
+.di-link:hover { color: var(--accent-dark); text-decoration: underline; }
+
+/* ---------- shared panel pieces ---------- */
+
+.di-stack { display: flex; flex-direction: column; gap: 14px; }
+.di-head-row { display: flex; align-items: center; gap: 8px; }
+.di-lede { margin: 0; font-size: 12.5px; line-height: 1.5; color: var(--ink-faint); }
+
+.di-summary { margin: 0; font-size: 14px; line-height: 1.68; color: var(--ink-muted); }
+
+.di-conf-dot {
+  width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0;
+  background: var(--ink-faint);
+}
+.di-conf-dot.high { background: var(--accent); }
+.di-conf-dot.medium { background: var(--amber); }
+.di-conf-dot.low { background: var(--danger); }
+
+.di-note {
+  padding: 9px 11px;
+  border: 1px dashed var(--mint-line); border-radius: var(--radius-s);
+  background: var(--accent-soft);
+  font-size: 12.5px; line-height: 1.55; color: var(--ink-muted);
+}
+.di-fine { margin: 8px 0 0; font-size: 11.5px; color: var(--ink-faint); }
+
+.di-loading {
+  display: flex; align-items: center; gap: 9px;
+  padding: 10px 0;
+  font-size: 13px; color: var(--ink-muted);
+}
+.di-error {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  padding: 9px 11px;
+  border: 1px solid var(--line); border-radius: var(--radius-s);
+  font-size: 12.5px; line-height: 1.5; color: var(--danger);
+}
+
+/* ---------- gaps ---------- */
+
+.di-gaps {
+  padding: 12px 13px;
+  border: 1px solid var(--amber); border-radius: var(--radius-s);
+  background: rgba(184, 134, 58, .06);
+}
+.di-gaps-head {
+  display: flex; align-items: center; gap: 7px;
+  margin-bottom: 10px;
+  font-size: 12px; font-weight: 700; letter-spacing: .03em;
+  text-transform: uppercase; color: var(--amber);
+}
+.di-gap { display: flex; gap: 9px; padding: 8px 0; border-top: 1px solid var(--line); }
+.di-gap:first-of-type { border-top: 0; padding-top: 0; }
+.di-gap-issue { margin: 0; font-size: 13.5px; line-height: 1.55; color: var(--ink); }
+.di-gap-why { margin: 4px 0 0; font-size: 12.5px; line-height: 1.55; color: var(--ink-muted); }
+
+.di-sev {
+  flex-shrink: 0; align-self: flex-start;
+  padding: 2px 7px; border-radius: 5px;
+  border: 1px solid var(--line);
+  font-size: 10px; font-weight: 700; letter-spacing: .04em;
+  text-transform: uppercase; color: var(--ink-faint);
+}
+.di-sev.high { border-color: var(--danger); color: var(--danger); }
+.di-sev.medium { border-color: var(--amber); color: var(--amber); }
+
+/* ---------- sections ---------- */
+
+.di-section { border-top: 1px solid var(--line); }
+.di-section > summary {
+  display: flex; align-items: center; gap: 8px;
+  padding: 11px 0 10px;
+  cursor: pointer; list-style: none;
+}
+.di-section > summary::-webkit-details-marker { display: none; }
+.di-section-title {
+  font-size: 12.5px; font-weight: 700; letter-spacing: .02em; color: var(--ink);
+}
+.di-count {
+  padding: 1px 7px; border-radius: 999px;
+  background: var(--mint); color: var(--accent-dark);
+  font-size: 10.5px; font-weight: 700;
+}
+.di-chev { margin-left: auto; display: flex; color: var(--ink-faint); transition: transform .18s; }
+.di-chev svg { width: 16px; height: 16px; }
+.di-section[open] .di-chev { transform: rotate(180deg); }
+.di-section-body { padding-bottom: 12px; }
+
+.di-list { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 10px; }
+.di-list li { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px; }
+.di-list strong { font-size: 13.5px; }
+.di-role, .di-kind {
+  padding: 1px 7px; border-radius: 5px;
+  background: var(--bg); border: 1px solid var(--line);
+  font-size: 10.5px; font-weight: 700; letter-spacing: .03em;
+  text-transform: uppercase; color: var(--ink-faint);
+}
+.di-sub { flex-basis: 100%; font-size: 12.5px; line-height: 1.55; color: var(--ink-muted); }
+
+.di-timeline { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 8px; }
+.di-timeline li { display: flex; gap: 10px; font-size: 13px; line-height: 1.5; color: var(--ink-muted); }
+.di-date {
+  flex-shrink: 0; min-width: 96px;
+  font-weight: 700; color: var(--ink);
+}
+
+.di-bullets { margin: 0; padding-left: 17px; display: flex; flex-direction: column; gap: 7px; }
+.di-bullets li { font-size: 13px; line-height: 1.6; color: var(--ink-muted); }
+.di-bullets.muted li { color: var(--ink-faint); }
+
+.di-amounts { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 8px; }
+.di-amounts li { display: flex; align-items: baseline; gap: 10px; font-size: 13px; color: var(--ink-muted); }
+.di-amounts strong { flex-shrink: 0; font-size: 14px; color: var(--ink); }
+
+/* ---------- questions ---------- */
+
+.di-questions { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 8px; }
+
+.di-q {
+  display: flex; gap: 10px;
+  padding: 11px 12px;
+  border: 1px solid var(--line); border-radius: var(--radius-s);
+  background: var(--surface);
+  transition: border-color .15s, background .15s;
+}
+.di-q.picked { border-color: var(--accent); background: var(--accent-soft); }
+.di-q-body { flex: 1; min-width: 0; }
+.di-q-top { display: flex; align-items: center; gap: 7px; margin-bottom: 6px; }
+.di-cat {
+  font-size: 10.5px; font-weight: 700; letter-spacing: .04em;
+  text-transform: uppercase; color: var(--ink-faint);
+}
+.di-q-text { margin: 0; font-size: 13.5px; line-height: 1.55; color: var(--ink); }
+.di-q-gap {
+  display: flex; align-items: flex-start; gap: 6px;
+  margin: 7px 0 0;
+  font-size: 12px; line-height: 1.5; color: var(--amber);
+}
+.di-q-why { margin: 6px 0 0; font-size: 12.5px; line-height: 1.55; color: var(--ink-muted); }
+.di-q-actions { margin-top: 8px; }
+
+.di-check {
+  display: flex; align-items: center; justify-content: center;
+  width: 19px; height: 19px; flex-shrink: 0; margin-top: 1px; padding: 0;
+  border: 1.5px solid var(--line); border-radius: 6px;
+  background: var(--surface); color: var(--on-accent); cursor: pointer;
+  transition: background .15s, border-color .15s;
+}
+.di-check svg { width: 13px; height: 13px; }
+.di-q.picked .di-check { background: var(--accent); border-color: var(--accent); }
+
+.di-sticky-actions {
+  position: sticky; bottom: -26px; z-index: 5;
+  display: flex; gap: 8px;
+  padding: 12px 0;
+  background: linear-gradient(to bottom, transparent, var(--surface) 30%);
+}
+
+/* ---------- ask tab ---------- */
+
+.di-ask { display: flex; flex-direction: column; height: 100%; min-height: 0; }
+.di-ask-thread {
+  flex: 1; min-height: 0; overflow-y: auto;
+  padding: 16px 18px 6px;
+  display: flex; flex-direction: column; gap: 12px;
+}
+.di-ask-intro p { margin: 0 0 12px; font-size: 13px; line-height: 1.6; color: var(--ink-faint); }
+.di-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.di-chip {
+  padding: 6px 11px;
+  border: 1px solid var(--line); border-radius: 999px;
+  background: var(--surface); color: var(--ink-muted);
+  font-family: inherit; font-size: 12px; cursor: pointer;
+  transition: border-color .15s, color .15s, background .15s;
+}
+.di-chip:hover { border-color: var(--accent); color: var(--accent-dark); background: var(--accent-soft); }
+
+.di-ask-you {
+  align-self: flex-end; max-width: 88%;
+  padding: 9px 13px;
+  border-radius: 14px 14px 5px 14px;
+  background: var(--mint); border: 1px solid var(--mint-line);
+  font-size: 13.5px; line-height: 1.55; white-space: pre-wrap;
+}
+.di-ask-ai {
+  align-self: flex-start; max-width: 96%;
+  padding: 11px 13px;
+  border: 1px solid var(--line); border-radius: 14px 14px 14px 5px;
+  background: var(--surface);
+}
+.di-source {
+  display: inline-block; margin-bottom: 7px;
+  padding: 2px 8px; border-radius: 999px;
+  border: 1px solid var(--line);
+  font-size: 10.5px; font-weight: 700; letter-spacing: .04em;
+  text-transform: uppercase; color: var(--ink-faint);
+}
+/* The single most important pixel in this panel: whether the answer came
+   out of the file or not. */
+.di-source.found { border-color: var(--mint-line); background: var(--mint); color: var(--accent-dark); }
+.di-source.absent { border-color: var(--amber); color: var(--amber); }
+.di-ask-text { margin: 0; font-size: 13.5px; line-height: 1.65; color: var(--ink); white-space: pre-wrap; }
+.di-evidence { margin: 9px 0 0; padding: 0 0 0 11px; list-style: none; border-left: 2px solid var(--mint-line); }
+.di-evidence li { font-size: 12.5px; line-height: 1.6; color: var(--ink-muted); font-style: italic; }
+.di-evidence li + li { margin-top: 6px; }
+.di-ask-note { margin: 9px 0 0; font-size: 12.5px; line-height: 1.55; color: var(--ink-faint); }
+
+.di-ask-dock {
+  flex-shrink: 0;
+  display: flex; align-items: flex-end; gap: 7px;
+  margin: 10px 14px 14px;
+  padding: 5px 5px 5px 13px;
+  border: 1px solid var(--line); border-radius: var(--radius-m);
+  background: var(--surface);
+  transition: border-color .15s;
+}
+.di-ask-dock:focus-within { border-color: var(--accent); }
+.di-ask-input {
+  flex: 1; min-width: 0; min-height: 30px; max-height: 120px;
+  padding: 6px 0; border: 0; background: transparent; outline: none; resize: none;
+  font-family: inherit; font-size: 13.5px; line-height: 1.5; color: var(--ink);
+}
+.di-ask-input::placeholder { color: var(--ink-faint); }
+.di-ask-send {
+  display: flex; align-items: center; justify-content: center;
+  width: 32px; height: 32px; flex-shrink: 0; padding: 0;
+  border: 0; border-radius: 10px;
+  background: var(--accent); color: var(--on-accent); cursor: pointer;
+  transition: background .15s, opacity .15s;
+}
+.di-ask-send svg { width: 16px; height: 16px; }
+.di-ask-send:hover:not(:disabled) { background: var(--accent-dark); }
+.di-ask-send:disabled { opacity: .4; cursor: not-allowed; }
+
+/* ---------- responsive ----------
+   Below this width there is no room for two columns, so the panel becomes
+   a sheet over the conversation rather than squeezing it to nothing. */
+
+@media (max-width: 1080px) {
+  .di-panel {
+    position: fixed; inset: 0; z-index: 80;
+    width: auto; border-left: 0;
+    box-shadow: var(--shadow-strong);
+  }
+  .di-card { max-width: 86%; }
+}
+
+@media (max-width: 900px) {
+  .di-shell { height: auto; }
+  .di-panel-head { padding-top: 16px; }
+}
