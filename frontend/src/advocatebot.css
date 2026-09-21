@@ -14,6 +14,7 @@
    the tooltip and the aria-label. */
 
 .ab-fab {
+  --ab-glow: 176, 122, 62;            /* the bronze of her mark, as rgb */
   position: fixed;
   right: 24px;
   bottom: 24px;
@@ -24,13 +25,73 @@
   border: 0;
   border-radius: 50%;
   background: transparent;
-  box-shadow: 0 6px 20px rgba(0, 0, 0, .28);
+  box-shadow:
+    0 6px 20px rgba(0, 0, 0, .28),
+    0 0 0 2px rgba(var(--ab-glow), .55),
+    0 0 18px 4px rgba(var(--ab-glow), .45);
   cursor: pointer;
-  transition: transform .18s cubic-bezier(.4, 0, .2, 1), box-shadow .18s;
+  isolation: isolate;
+  animation: ab-halo 2.4s ease-in-out infinite;
+  transition: transform .18s cubic-bezier(.4, 0, .2, 1);
 }
-.ab-fab:hover { transform: translateY(-2px) scale(1.04); box-shadow: 0 10px 26px rgba(0, 0, 0, .34); }
+
+/* Two sonar rings, staggered by half a cycle so one is always leaving.
+   Both sit behind the mark (z-index -1 inside the isolated button). */
+.ab-fab::before,
+.ab-fab::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  border-radius: 50%;
+  border: 2px solid rgba(var(--ab-glow), .9);
+  background: radial-gradient(circle, rgba(var(--ab-glow), .28) 0%, rgba(var(--ab-glow), 0) 70%);
+  pointer-events: none;
+  animation: ab-ring 2.4s cubic-bezier(.2, .6, .35, 1) infinite;
+}
+.ab-fab::after { animation-delay: 1.2s; }
+
+@keyframes ab-ring {
+  0%   { transform: scale(1);    opacity: .9; }
+  80%  { opacity: 0; }
+  100% { transform: scale(1.85); opacity: 0; }
+}
+
+/* The steady glow breathes in time with the rings. */
+@keyframes ab-halo {
+  0%, 100% {
+    box-shadow:
+      0 6px 20px rgba(0, 0, 0, .28),
+      0 0 0 2px rgba(var(--ab-glow), .55),
+      0 0 14px 2px rgba(var(--ab-glow), .35);
+  }
+  50% {
+    box-shadow:
+      0 6px 20px rgba(0, 0, 0, .28),
+      0 0 0 3px rgba(var(--ab-glow), .85),
+      0 0 30px 10px rgba(var(--ab-glow), .6);
+  }
+}
+
+.ab-fab:hover {
+  transform: translateY(-2px) scale(1.06);
+  animation-duration: 1.2s;           /* quickens under the pointer */
+}
+.ab-fab:hover::before,
+.ab-fab:hover::after { animation-duration: 1.2s; }
+.ab-fab:hover::after { animation-delay: .6s; }
 .ab-fab:active { transform: translateY(0) scale(.98); }
-.ab-fab:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+.ab-fab:focus-visible { outline: 2px solid var(--accent); outline-offset: 5px; }
+
+/* People who have asked for less motion get the glow, held still. */
+@media (prefers-reduced-motion: reduce) {
+  .ab-fab,
+  .ab-fab::before,
+  .ab-fab::after { animation: none; }
+  .ab-fab::before,
+  .ab-fab::after { display: none; }
+  .ab-fab:hover { transform: none; }
+}
 
 /* A conversation is waiting behind the button. Small enough to be a hint
    rather than a notification badge - nothing here is unread. */
@@ -43,6 +104,7 @@
   border-radius: 50%;
   background: var(--accent);
   border: 2px solid var(--bg);
+  z-index: 1;
 }
 
 /* ---------- panel ----------
