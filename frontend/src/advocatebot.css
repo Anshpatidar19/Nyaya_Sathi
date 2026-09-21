@@ -1,0 +1,273 @@
+/* Find an Advocate assistant.
+
+   Imported by components/AdvocateBot.jsx so the styles travel with the
+   feature. Prefix ab- throughout, so nothing collides with nx- (network),
+   ask- (the AI surface) or di- (document intelligence).
+
+   Every colour is a token from styles.css, except the bronze used for the
+   score dial, which belongs to the assistant's own mark. */
+
+/* ---------- launcher ----------
+   The mark alone, in a circle, bottom right. No label: a floating button
+   with two lines of copy competes with the page it floats over, and this
+   control is conventional enough that the icon carries it. The name is in
+   the tooltip and the aria-label. */
+
+.ab-fab {
+  position: fixed;
+  right: 24px;
+  bottom: 24px;
+  z-index: 70;
+  width: 64px;
+  height: 64px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, .28);
+  cursor: pointer;
+  transition: transform .18s cubic-bezier(.4, 0, .2, 1), box-shadow .18s;
+}
+.ab-fab:hover { transform: translateY(-2px) scale(1.04); box-shadow: 0 10px 26px rgba(0, 0, 0, .34); }
+.ab-fab:active { transform: translateY(0) scale(.98); }
+.ab-fab:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+
+/* A conversation is waiting behind the button. Small enough to be a hint
+   rather than a notification badge - nothing here is unread. */
+.ab-fab-dot {
+  position: absolute;
+  top: 3px;
+  right: 3px;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: var(--accent);
+  border: 2px solid var(--bg);
+}
+
+/* ---------- panel ----------
+   Fixed to the right edge rather than pushing the results grid: the grid
+   is what the page is for, and a layout that reflows every time the
+   assistant opens is worse than one that overlays. */
+
+.ab-panel {
+  position: fixed;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 85;
+  width: 440px;
+  max-width: 100vw;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  border-left: 1px solid var(--line);
+  background: var(--surface);
+  box-shadow: var(--shadow-strong);
+}
+
+.ab-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 14px 14px 13px 18px;
+  border-bottom: 1px solid var(--line);
+}
+.ab-mark { flex-shrink: 0; }
+.ab-head-text { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.ab-head-text strong { font-size: 15px; letter-spacing: -0.01em; }
+.ab-head-text span { font-size: 11.5px; color: var(--ink-faint); }
+
+.ab-clear {
+  flex-shrink: 0; padding: 4px 9px;
+  border: 1px solid var(--line); border-radius: 7px;
+  background: transparent; color: var(--ink-faint);
+  font-family: inherit; font-size: 11.5px; font-weight: 600; cursor: pointer;
+  transition: border-color .15s, color .15s;
+}
+.ab-clear:hover { border-color: var(--accent); color: var(--accent-dark); }
+
+.ab-x {
+  display: flex; align-items: center; justify-content: center;
+  width: 30px; height: 30px; flex-shrink: 0; padding: 0;
+  border: 0; border-radius: 8px; background: transparent;
+  color: var(--ink-faint); cursor: pointer;
+  transition: background .15s, color .15s;
+}
+.ab-x svg { width: 16px; height: 16px; }
+.ab-x:hover { background: var(--mint); color: var(--accent-dark); }
+
+.ab-thread {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 16px 18px 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.ab-intro p { margin: 0 0 12px; font-size: 13px; line-height: 1.6; color: var(--ink-faint); }
+.ab-openers { display: flex; flex-direction: column; gap: 6px; align-items: flex-start; }
+.ab-opener {
+  padding: 7px 13px;
+  border: 1px solid var(--line); border-radius: 999px;
+  background: var(--surface); color: var(--ink-muted);
+  font-family: inherit; font-size: 12.5px; text-align: left; cursor: pointer;
+  transition: border-color .15s, color .15s, background .15s;
+}
+.ab-opener:hover { border-color: var(--accent); color: var(--accent-dark); background: var(--accent-soft); }
+
+.ab-you {
+  align-self: flex-end;
+  max-width: 86%;
+  padding: 9px 13px;
+  border: 1px solid var(--mint-line);
+  border-radius: 14px 14px 5px 14px;
+  background: var(--mint);
+  font-size: 13.5px; line-height: 1.55;
+}
+
+.ab-reply { display: flex; flex-direction: column; gap: 10px; }
+.ab-reply-text { margin: 0; font-size: 13.5px; line-height: 1.65; color: var(--ink-muted); }
+
+.ab-understood {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 6px;
+  font-size: 11px;
+}
+.ab-understood-label {
+  font-weight: 700; letter-spacing: .05em; text-transform: uppercase;
+  color: var(--ink-faint);
+}
+.ab-token {
+  padding: 2px 8px; border-radius: 999px;
+  background: var(--bg); border: 1px solid var(--line);
+  font-size: 11.5px; color: var(--ink-muted);
+}
+
+.ab-fineprint {
+  margin: 2px 0 0;
+  font-size: 11px; line-height: 1.55; color: var(--ink-faint);
+}
+
+.ab-busy { display: flex; align-items: center; gap: 9px; font-size: 13px; color: var(--ink-muted); }
+.ab-error {
+  padding: 9px 11px;
+  border: 1px solid var(--line); border-radius: var(--radius-s);
+  font-size: 12.5px; line-height: 1.5; color: var(--danger);
+}
+
+/* ---------- result card ---------- */
+
+.ab-card {
+  padding: 13px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-s);
+  background: var(--surface);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.ab-card-top { display: flex; align-items: flex-start; gap: 11px; }
+.ab-ident { flex: 1; min-width: 0; }
+.ab-name-row { display: flex; align-items: center; gap: 7px; }
+.ab-name-row h4 {
+  margin: 0; font-size: 14.5px; letter-spacing: -0.01em;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.ab-sub { font-size: 12.5px; font-weight: 600; color: var(--accent-dark); }
+.ab-meta { font-size: 11.5px; color: var(--ink-faint); }
+.ab-dot { margin: 0 5px; }
+
+/* The score, as a ring. Deliberately not stars: stars are the visual
+   language of user ratings, and there are no user ratings here. */
+.ab-dial { position: relative; width: 44px; height: 44px; flex-shrink: 0; }
+.ab-dial svg { width: 44px; height: 44px; }
+.ab-dial-track { fill: none; stroke: var(--line); stroke-width: 3.5; }
+.ab-dial-fill {
+  fill: none; stroke: #B07A3E; stroke-width: 3.5; stroke-linecap: round;
+  transition: stroke-dasharray .5s cubic-bezier(.4, 0, .2, 1);
+}
+.ab-dial-num {
+  position: absolute; top: 12px; left: 0; right: 0;
+  text-align: center; font-size: 13px; font-weight: 800; color: var(--ink);
+}
+.ab-dial-cap {
+  position: absolute; top: 25px; left: 0; right: 0;
+  text-align: center; font-size: 7.5px; font-weight: 700;
+  letter-spacing: .08em; text-transform: uppercase; color: var(--ink-faint);
+}
+
+.ab-reasons { margin: 0; padding: 0 0 0 15px; display: flex; flex-direction: column; gap: 4px; }
+.ab-reasons li { font-size: 12.5px; line-height: 1.5; color: var(--ink-muted); }
+
+.ab-breakdown-toggle {
+  align-self: flex-start; padding: 0;
+  border: 0; background: transparent;
+  font-family: inherit; font-size: 12px; font-weight: 600;
+  color: var(--accent); cursor: pointer;
+}
+.ab-breakdown-toggle:hover { color: var(--accent-dark); text-decoration: underline; }
+
+/* The full arithmetic, on demand. A score nobody can audit is just a
+   number with authority it has not earned. */
+.ab-factors {
+  margin: 0; padding: 10px 11px; list-style: none;
+  border: 1px dashed var(--line); border-radius: 10px;
+  background: var(--bg);
+  display: flex; flex-direction: column; gap: 9px;
+}
+.ab-factors li {
+  display: grid;
+  grid-template-columns: 96px 1fr 42px;
+  align-items: center;
+  gap: 4px 8px;
+  font-size: 11.5px;
+}
+.ab-f-label { font-weight: 700; color: var(--ink); }
+.ab-f-bar {
+  height: 5px; border-radius: 3px; background: var(--line); overflow: hidden;
+}
+.ab-f-bar span { display: block; height: 100%; background: var(--accent); border-radius: 3px; }
+.ab-f-pts { text-align: right; font-variant-numeric: tabular-nums; color: var(--ink-muted); }
+.ab-f-detail { grid-column: 1 / -1; line-height: 1.5; color: var(--ink-faint); }
+
+.ab-actions { display: flex; gap: 8px; }
+
+/* ---------- dock ---------- */
+
+.ab-dock {
+  flex-shrink: 0;
+  display: flex; align-items: flex-end; gap: 7px;
+  margin: 10px 16px 16px;
+  padding: 5px 5px 5px 13px;
+  border: 1px solid var(--line); border-radius: var(--radius-m);
+  background: var(--surface);
+  transition: border-color .15s;
+}
+.ab-dock:focus-within { border-color: var(--accent); }
+.ab-input {
+  flex: 1; min-width: 0; min-height: 32px; max-height: 120px;
+  padding: 7px 0; border: 0; background: transparent; outline: none; resize: none;
+  font-family: inherit; font-size: 13.5px; line-height: 1.5; color: var(--ink);
+}
+.ab-input::placeholder { color: var(--ink-faint); }
+.ab-send {
+  display: flex; align-items: center; justify-content: center;
+  width: 34px; height: 34px; flex-shrink: 0; padding: 0;
+  border: 0; border-radius: 10px;
+  background: var(--accent); color: var(--on-accent); cursor: pointer;
+  transition: background .15s, opacity .15s;
+}
+.ab-send svg { width: 16px; height: 16px; }
+.ab-send:hover:not(:disabled) { background: var(--accent-dark); }
+.ab-send:disabled { opacity: .4; cursor: not-allowed; }
+
+/* ---------- responsive ---------- */
+
+@media (max-width: 560px) {
+  .ab-panel { width: 100vw; border-left: 0; }
+  .ab-fab { right: 16px; bottom: 16px; width: 58px; height: 58px; }
+  .ab-factors li { grid-template-columns: 84px 1fr 40px; }
+}

@@ -3,6 +3,7 @@ import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useAuth, ACTIVE_CONVERSATION_KEY } from '../AuthContext';
 import { AppNav, AppSidebarUser, AppTopbar } from '../components/AppShell';
 import ArgumentsResult from '../components/ArgumentsResult';
+import '../thinking.css';
 import ArgumentsSetup from '../components/ArgumentsSetup';
 import DocTypeSelect from '../components/DocTypeSelect';
 import {
@@ -1021,19 +1022,97 @@ function Grounding({ data }) {
   );
 }
 
-/* The answer mid-flight. Deliberately plain: citations, next steps and the
-   grounding badge are genuinely not known until the answer is finished and
-   validated, so showing placeholders for them would be a lie. */
+/* Seconds since this turn started. Only runs while it is wanted, so a
+   finished card is not re-rendering once a second forever. */
+function useElapsed(active) {
+  const [seconds, setSeconds] = useState(0);
+  useEffect(() => {
+    if (!active) return undefined;
+    const started = Date.now();
+    const id = setInterval(
+      () => setSeconds(Math.floor((Date.now() - started) / 1000)),
+      1000
+    );
+    return () => clearInterval(id);
+  }, [active]);
+  return seconds;
+}
+
+/* The answer mid-flight.
+
+   Citations, next steps and the grounding badge stay absent until the
+   answer is finished and validated - showing placeholders for them would
+   be a lie, and that has not changed.
+
+   What HAS changed is the wait itself. The old version was a spinner and
+   the word "Writing" over an empty card, which was wrong twice: nothing
+   was being written yet, and there was nothing to look at for the several
+   seconds retrieval takes.
+
+   There are two real states here and the client can tell them apart
+   without any new plumbing:
+
+     no text yet   retrieval and the model's reasoning are still running
+                   -> "Researching", over a skeleton of the answer to come
+     text arriving -> "Writing", skeleton gone, caret on the live edge
+
+   The distinction is honest: the first token IS the moment generation
+   starts producing. What this deliberately does not do is cycle through
+   invented stages - "Searching statutes... Checking judgments..." - since
+   the stream carries no stage events and this product's whole claim is
+   that its signals are real. If those stages are ever emitted over SSE,
+   this is where they would render, and then they would be true. */
 function StreamingAnswer({ body }) {
+  const text = body || '';
+  const writing = text.trim().length > 0;
+  const seconds = useElapsed(!writing);
+  const paragraphs = text.split(/\n{2,}/);
+
   return (
-    <div className="demo-card">
+    <div className="demo-card think-card">
+      <span className="think-rail" aria-hidden="true" />
+
       <div className="demo-topbar">
         <div className="demo-brand"><span className="sq">न्या</span> Research</div>
-        <span className="ground-pill"><span className="spinner" /> Writing…</span>
+        <span className={`think-pill${writing ? ' is-writing' : ''}`}>
+          <span className="think-orb" aria-hidden="true" />
+          <span className="think-label">{writing ? 'Writing' : 'Researching'}</span>
+          {/* Only once the wait is long enough to feel like a hang. Before
+              that it is noise; after it, it is the difference between
+              "slow" and "broken". */}
+          {!writing && seconds >= 4 && (
+            <span className="think-secs">{seconds}s</span>
+          )}
+        </span>
       </div>
-      {(body || '').split(/\n{2,}/).map((p, i) => (
-        <p className="answer-body" key={i}>{p}</p>
-      ))}
+
+      {writing ? (
+        paragraphs.map((p, i) => (
+          <p
+            className={`answer-body think-para${
+              i === paragraphs.length - 1 ? ' think-caret' : ''
+            }`}
+            key={i}
+          >
+            {p}
+          </p>
+        ))
+      ) : (
+        <div className="think-skeleton" aria-hidden="true">
+          <span style={{ width: '94%' }} />
+          <span style={{ width: '99%' }} />
+          <span style={{ width: '72%' }} />
+          <span className="think-gap" />
+          <span style={{ width: '88%' }} />
+          <span style={{ width: '61%' }} />
+        </div>
+      )}
+
+      {/* None of the above exists for a screen reader, so the state is
+          announced once per change rather than on every token. */}
+      <p className="think-sr" role="status" aria-live="polite">
+        {writing ? 'Writing the answer' : 'Researching sources'}
+      </p>
     </div>
   );
 }
