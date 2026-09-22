@@ -31,6 +31,7 @@ from . import (
     models,
     reasoning,
     schemas,
+    source_links,
     statutes,
     storage,
     translate,
@@ -41,6 +42,7 @@ from .matters_api import router as matters_router
 from .network_api import router as network_router
 from .doc_intel_api import router as doc_intel_router
 from .advocate_bot_api import router as advocate_bot_router
+from .source_links_api import router as source_links_router
 from .config import settings
 from .database import Base, SessionLocal, engine, get_db
 from fastapi.responses import StreamingResponse
@@ -204,6 +206,9 @@ app.include_router(doc_intel_router)
 # The Find an Advocate assistant. Registered after the network router so
 # /network/advocates/recommend sits beside the directory it searches.
 app.include_router(advocate_bot_router)
+
+# Source cards open the exact cited provision - see source_links.py.
+app.include_router(source_links_router)
 
 
 @app.get("/health")
@@ -916,6 +921,10 @@ def get_conversation(
                 payload = json.loads(t.payload_json)
             except json.JSONDecodeError:
                 payload = None
+        # Chats saved before direct source links carry Kanoon search URLs.
+        # Rewrite them on read so old threads open the exact section too.
+        if payload is not None:
+            source_links.upgrade_links(payload)
         turns.append(
             schemas.TurnOut(
                 id=t.id,

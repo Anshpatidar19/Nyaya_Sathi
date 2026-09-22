@@ -1022,22 +1022,6 @@ function Grounding({ data }) {
   );
 }
 
-/* Seconds since this turn started. Only runs while it is wanted, so a
-   finished card is not re-rendering once a second forever. */
-function useElapsed(active) {
-  const [seconds, setSeconds] = useState(0);
-  useEffect(() => {
-    if (!active) return undefined;
-    const started = Date.now();
-    const id = setInterval(
-      () => setSeconds(Math.floor((Date.now() - started) / 1000)),
-      1000
-    );
-    return () => clearInterval(id);
-  }, [active]);
-  return seconds;
-}
-
 /* The answer mid-flight.
 
    Citations, next steps and the grounding badge stay absent until the
@@ -1065,7 +1049,6 @@ function useElapsed(active) {
 function StreamingAnswer({ body }) {
   const text = body || '';
   const writing = text.trim().length > 0;
-  const seconds = useElapsed(!writing);
   const paragraphs = text.split(/\n{2,}/);
 
   return (
@@ -1077,12 +1060,6 @@ function StreamingAnswer({ body }) {
         <span className={`think-pill${writing ? ' is-writing' : ''}`}>
           <span className="think-orb" aria-hidden="true" />
           <span className="think-label">{writing ? 'Writing' : 'Researching'}</span>
-          {/* Only once the wait is long enough to feel like a hang. Before
-              that it is noise; after it, it is the difference between
-              "slow" and "broken". */}
-          {!writing && seconds >= 4 && (
-            <span className="think-secs">{seconds}s</span>
-          )}
         </span>
       </div>
 
