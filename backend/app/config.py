@@ -88,6 +88,13 @@ class Settings(BaseSettings):
     dense_min_score: float = float(os.getenv("DENSE_MIN_SCORE", "8.0"))
     dense_min_coverage: float = float(os.getenv("DENSE_MIN_COVERAGE", "0.34"))
 
+    # --- Source links ------------------------------------------------------
+    # Public base URL of THIS backend. Source cards whose Indian Kanoon page
+    # hasn't been resolved yet link to <this>/sources/statute/<act>/<section>,
+    # which redirects straight to the exact document. Must be reachable from
+    # the user's browser; the default matches the frontend's default API URL.
+    public_api_url: str = os.getenv("PUBLIC_API_URL", "http://127.0.0.1:8000")
+
     # --- Demo seed ---------------------------------------------------------
     # Password given to every seeded demo account. Only ever used by
     # `python -m app.seed_demo`; nothing at runtime reads it. Override it in

@@ -1,0 +1,1950 @@
+{
+ "version": 1,
+ "ids": {
+  "hma:1": {
+   "docid": "1382400",
+   "title": "Section 1 in The Hindu Marriage Act , 1955",
+   "at": 1790012785
+  },
+  "hma:10": {
+   "docid": "888857",
+   "title": "Section 10 in The Hindu Marriage Act , 1955",
+   "at": 1790012789
+  },
+  "hma:11": {
+   "docid": "1243269",
+   "title": "Section 11 in The Hindu Marriage Act , 1955",
+   "at": 1790012789
+  },
+  "hma:12": {
+   "docid": "368948",
+   "title": "Section 12 in The Hindu Marriage Act , 1955",
+   "at": 1790012789
+  },
+  "hma:13": {
+   "docid": "1284729",
+   "title": "Section 13 in The Hindu Marriage Act , 1955",
+   "at": 1790012792
+  },
+  "hma:14": {
+   "docid": "205162",
+   "title": "Section 14 in The Hindu Marriage Act , 1955",
+   "at": 1790012791
+  },
+  "hma:15": {
+   "docid": "1566829",
+   "title": "Section 15 in The Hindu Marriage Act , 1955",
+   "at": 1790012792
+  },
+  "hma:16": {
+   "docid": "284588",
+   "title": "Section 16 in The Hindu Marriage Act , 1955",
+   "at": 1790012793
+  },
+  "hma:17": {
+   "docid": "1889483",
+   "title": "Section 17 in The Hindu Marriage Act , 1955",
+   "at": 1790012793
+  },
+  "hma:18": {
+   "docid": "1800387",
+   "title": "Section 18 in The Hindu Marriage Act , 1955",
+   "at": 1790012794
+  },
+  "hma:19": {
+   "docid": "371013",
+   "title": "Section 19 in The Hindu Marriage Act , 1955",
+   "at": 1790012794
+  },
+  "hma:2": {
+   "docid": "1922953",
+   "title": "Section 2 in The Hindu Marriage Act , 1955",
+   "at": 1790012785
+  },
+  "hma:20": {
+   "docid": "1548610",
+   "title": "Section 20 in The Hindu Marriage Act , 1955",
+   "at": 1790012795
+  },
+  "hma:21": {
+   "docid": "626721",
+   "title": "Section 21 in The Hindu Marriage Act , 1955",
+   "at": 1790012796
+  },
+  "hma:22": {
+   "docid": "50217",
+   "title": "Section 22 in The Hindu Marriage Act , 1955",
+   "at": 1790012795
+  },
+  "hma:23": {
+   "docid": "542052",
+   "title": "Section 23 in The Hindu Marriage Act , 1955",
+   "at": 1790012795
+  },
+  "hma:24": {
+   "docid": "1449825",
+   "title": "Section 24 in The Hindu Marriage Act , 1955",
+   "at": 1790012797
+  },
+  "hma:25": {
+   "docid": "95286",
+   "title": "Section 25 in The Hindu Marriage Act , 1955",
+   "at": 1790012797
+  },
+  "hma:26": {
+   "docid": "972693",
+   "title": "Section 26 in The Hindu Marriage Act , 1955",
+   "at": 1790012797
+  },
+  "hma:27": {
+   "docid": "320503",
+   "title": "Section 27 in The Hindu Marriage Act , 1955",
+   "at": 1790012797
+  },
+  "hma:28": {
+   "docid": "1025846",
+   "title": "Section 28 in The Hindu Marriage Act , 1955",
+   "at": 1790012799
+  },
+  "hma:29": {
+   "docid": "300006",
+   "title": "Section 29 in The Hindu Marriage Act , 1955",
+   "at": 1790012799
+  },
+  "hma:3": {
+   "docid": "166195",
+   "title": "Section 3 in The Hindu Marriage Act , 1955",
+   "at": 1790012785
+  },
+  "hma:30": {
+   "docid": "1952583",
+   "title": "Section 30 in The Hindu Marriage Act , 1955",
+   "at": 1790012799
+  },
+  "hma:4": {
+   "docid": "446436",
+   "title": "Section 4 in The Hindu Marriage Act , 1955",
+   "at": 1790012785
+  },
+  "hma:5": {
+   "docid": "635068",
+   "title": "Section 5 in The Hindu Marriage Act , 1955",
+   "at": 1790012787
+  },
+  "hma:6": {
+   "docid": "1994601",
+   "title": "Section 6 in The Hindu Marriage Act , 1955",
+   "at": 1790012787
+  },
+  "hma:7": {
+   "docid": "358783",
+   "title": "Section 7 in The Hindu Marriage Act , 1955",
+   "at": 1790012787
+  },
+  "hma:8": {
+   "docid": "774980",
+   "title": "Section 8 in The Hindu Marriage Act , 1955",
+   "at": 1790012787
+  },
+  "hma:9": {
+   "docid": "322349",
+   "title": "Section 9 in The Hindu Marriage Act , 1955",
+   "at": 1790012790
+  },
+  "mva:1": {
+   "docid": "609788",
+   "title": "Section 1 in The Motor Vehicles Act , 1988",
+   "at": 1790012799
+  },
+  "mva:10": {
+   "docid": "145572122",
+   "title": "Section 10 in The Motor Vehicles Act , 1988",
+   "at": 1790012804
+  },
+  "mva:100": {
+   "docid": "1867481",
+   "title": "Section 100 in The Motor Vehicles Act , 1988",
+   "at": 1790012855
+  },
+  "mva:101": {
+   "docid": "1423864",
+   "title": "Section 101 in The Motor Vehicles Act , 1988",
+   "at": 1790012855
+  },
+  "mva:102": {
+   "docid": "736445",
+   "title": "Section 102 in The Motor Vehicles Act , 1988",
+   "at": 1790012857
+  },
+  "mva:103": {
+   "docid": "753768",
+   "title": "Section 103 in The Motor Vehicles Act , 1988",
+   "at": 1790012857
+  },
+  "mva:104": {
+   "docid": "457948",
+   "title": "Section 104 in The Motor Vehicles Act , 1988",
+   "at": 1790012858
+  },
+  "mva:105": {
+   "docid": "1406947",
+   "title": "Section 105 in The Motor Vehicles Act , 1988",
+   "at": 1790012858
+  },
+  "mva:106": {
+   "docid": "1974638",
+   "title": "Section 106 in The Motor Vehicles Act , 1988",
+   "at": 1790012859
+  },
+  "mva:107": {
+   "docid": "1348018",
+   "title": "Section 107 in The Motor Vehicles Act , 1988",
+   "at": 1790012859
+  },
+  "mva:108": {
+   "docid": "1399648",
+   "title": "Section 108 in The Motor Vehicles Act , 1988",
+   "at": 1790012859
+  },
+  "mva:109": {
+   "docid": "1979500",
+   "title": "Section 109 in The Motor Vehicles Act , 1988",
+   "at": 1790012859
+  },
+  "mva:11": {
+   "docid": "420164",
+   "title": "Section 11 in The Motor Vehicles Act , 1988",
+   "at": 1790012805
+  },
+  "mva:110": {
+   "docid": "1037209",
+   "title": "Section 110 in The Motor Vehicles Act , 1988",
+   "at": 1790012862
+  },
+  "mva:111": {
+   "docid": "1686075",
+   "title": "Section 111 in The Motor Vehicles Act , 1988",
+   "at": 1790012861
+  },
+  "mva:112": {
+   "docid": "1033662",
+   "title": "Section 112 in The Motor Vehicles Act , 1988",
+   "at": 1790012861
+  },
+  "mva:113": {
+   "docid": "1033360",
+   "title": "Section 113 in The Motor Vehicles Act , 1988",
+   "at": 1790012861
+  },
+  "mva:114": {
+   "docid": "968149",
+   "title": "Section 114 in The Motor Vehicles Act , 1988",
+   "at": 1790012863
+  },
+  "mva:115": {
+   "docid": "1631786",
+   "title": "Section 115 in The Motor Vehicles Act , 1988",
+   "at": 1790012863
+  },
+  "mva:116": {
+   "docid": "955326",
+   "title": "Section 116 in The Motor Vehicles Act , 1988",
+   "at": 1790012863
+  },
+  "mva:117": {
+   "docid": "1961888",
+   "title": "Section 117 in The Motor Vehicles Act , 1988",
+   "at": 1790012864
+  },
+  "mva:118": {
+   "docid": "1748744",
+   "title": "Section 118 in The Motor Vehicles Act , 1988",
+   "at": 1790012865
+  },
+  "mva:119": {
+   "docid": "201266",
+   "title": "Section 119 in The Motor Vehicles Act , 1988",
+   "at": 1790012865
+  },
+  "mva:12": {
+   "docid": "1106827",
+   "title": "Section 12 in The Motor Vehicles Act , 1988",
+   "at": 1790012805
+  },
+  "mva:120": {
+   "docid": "1640440",
+   "title": "Section 120 in The Motor Vehicles Act , 1988",
+   "at": 1790012865
+  },
+  "mva:121": {
+   "docid": "100185",
+   "title": "Section 121 in The Motor Vehicles Act , 1988",
+   "at": 1790012866
+  },
+  "mva:122": {
+   "docid": "497562",
+   "title": "Section 122 in The Motor Vehicles Act , 1988",
+   "at": 1790012867
+  },
+  "mva:123": {
+   "docid": "9695",
+   "title": "Section 123 in The Motor Vehicles Act , 1988",
+   "at": 1790012867
+  },
+  "mva:124": {
+   "docid": "1796195",
+   "title": "Section 124 in The Motor Vehicles Act , 1988",
+   "at": 1790012867
+  },
+  "mva:125": {
+   "docid": "484344",
+   "title": "Section 125 in The Motor Vehicles Act , 1988",
+   "at": 1790012868
+  },
+  "mva:126": {
+   "docid": "1870612",
+   "title": "Section 126 in The Motor Vehicles Act , 1988",
+   "at": 1790012868
+  },
+  "mva:127": {
+   "docid": "504034",
+   "title": "Section 127 in The Motor Vehicles Act , 1988",
+   "at": 1790012869
+  },
+  "mva:128": {
+   "docid": "1484545",
+   "title": "Section 128 in The Motor Vehicles Act , 1988",
+   "at": 1790012869
+  },
+  "mva:129": {
+   "docid": null,
+   "title": null,
+   "at": 1790012871
+  },
+  "mva:13": {
+   "docid": "145949",
+   "title": "Section 13 in The Motor Vehicles Act , 1988",
+   "at": 1790012805
+  },
+  "mva:130": {
+   "docid": "244548",
+   "title": "Section 130 in The Motor Vehicles Act , 1988",
+   "at": 1790012870
+  },
+  "mva:131": {
+   "docid": "579031",
+   "title": "Section 131 in The Motor Vehicles Act , 1988",
+   "at": 1790012871
+  },
+  "mva:132": {
+   "docid": "91685",
+   "title": "Section 132 in The Motor Vehicles Act , 1988",
+   "at": 1790012871
+  },
+  "mva:133": {
+   "docid": "561735",
+   "title": "Section 133 in The Motor Vehicles Act , 1988",
+   "at": 1790012873
+  },
+  "mva:134": {
+   "docid": "734786",
+   "title": "Section 134 in The Motor Vehicles Act , 1988",
+   "at": 1790012873
+  },
+  "mva:135": {
+   "docid": "1368038",
+   "title": "Section 135 in The Motor Vehicles Act , 1988",
+   "at": 1790012873
+  },
+  "mva:136": {
+   "docid": "173711688",
+   "title": "Section 136 in The Motor Vehicles Act , 1988",
+   "at": 1790012873
+  },
+  "mva:137": {
+   "docid": "82490609",
+   "title": "Section 137 in The Motor Vehicles Act , 1988",
+   "at": 1790012874
+  },
+  "mva:138": {
+   "docid": "142296103",
+   "title": "Section 138 in The Motor Vehicles Act , 1988",
+   "at": 1790012875
+  },
+  "mva:139": {
+   "docid": "56672819",
+   "title": "Section 139 in The Motor Vehicles Act , 1988",
+   "at": 1790012875
+  },
+  "mva:14": {
+   "docid": "1693028",
+   "title": "Section 14 in The Motor Vehicles Act , 1988",
+   "at": 1790012806
+  },
+  "mva:140": {
+   "docid": null,
+   "title": null,
+   "at": 1790012877
+  },
+  "mva:141": {
+   "docid": null,
+   "title": null,
+   "at": 1790012877
+  },
+  "mva:142": {
+   "docid": null,
+   "title": null,
+   "at": 1790012878
+  },
+  "mva:143": {
+   "docid": null,
+   "title": null,
+   "at": 1790012879
+  },
+  "mva:144": {
+   "docid": null,
+   "title": null,
+   "at": 1790012880
+  },
+  "mva:145": {
+   "docid": "189356490",
+   "title": "Section 145 in The Motor Vehicles Act , 1988",
+   "at": 1790012879
+  },
+  "mva:146": {
+   "docid": "42762185",
+   "title": "Section 146 in The Motor Vehicles Act , 1988",
+   "at": 1790012879
+  },
+  "mva:147": {
+   "docid": "87183818",
+   "title": "Section 147 in The Motor Vehicles Act , 1988",
+   "at": 1790012880
+  },
+  "mva:148": {
+   "docid": "45960320",
+   "title": "Section 148 in The Motor Vehicles Act , 1988",
+   "at": 1790012881
+  },
+  "mva:149": {
+   "docid": "14430771",
+   "title": "Section 149 in The Motor Vehicles Act , 1988",
+   "at": 1790012881
+  },
+  "mva:15": {
+   "docid": "300189",
+   "title": "Section 15 in The Motor Vehicles Act , 1988",
+   "at": 1790012806
+  },
+  "mva:150": {
+   "docid": "185690380",
+   "title": "Section 150 in The Motor Vehicles Act , 1988",
+   "at": 1790012883
+  },
+  "mva:151": {
+   "docid": "67781067",
+   "title": "Section 151 in The Motor Vehicles Act , 1988",
+   "at": 1790012882
+  },
+  "mva:152": {
+   "docid": "86115483",
+   "title": "Section 152 in The Motor Vehicles Act , 1988",
+   "at": 1790012882
+  },
+  "mva:153": {
+   "docid": "125025563",
+   "title": "Section 153 in The Motor Vehicles Act , 1988",
+   "at": 1790012883
+  },
+  "mva:154": {
+   "docid": "29641724",
+   "title": "Section 154 in The Motor Vehicles Act , 1988",
+   "at": 1790012884
+  },
+  "mva:155": {
+   "docid": "98405634",
+   "title": "Section 155 in The Motor Vehicles Act , 1988",
+   "at": 1790012884
+  },
+  "mva:156": {
+   "docid": "62111316",
+   "title": "Section 156 in The Motor Vehicles Act , 1988",
+   "at": 1790012884
+  },
+  "mva:157": {
+   "docid": "161412796",
+   "title": "Section 157 in The Motor Vehicles Act , 1988",
+   "at": 1790012885
+  },
+  "mva:158": {
+   "docid": "74970700",
+   "title": "Section 158 in The Motor Vehicles Act , 1988",
+   "at": 1790012886
+  },
+  "mva:159": {
+   "docid": "5275038",
+   "title": "Section 159 in The Motor Vehicles Act , 1988",
+   "at": 1790012886
+  },
+  "mva:16": {
+   "docid": "607216",
+   "title": "Section 16 in The Motor Vehicles Act , 1988",
+   "at": 1790012808
+  },
+  "mva:160": {
+   "docid": "56265335",
+   "title": "Section 160 in The Motor Vehicles Act , 1988",
+   "at": 1790012886
+  },
+  "mva:161": {
+   "docid": "94760817",
+   "title": "Section 161 in The Motor Vehicles Act , 1988",
+   "at": 1790012887
+  },
+  "mva:162": {
+   "docid": "49301980",
+   "title": "Section 162 in The Motor Vehicles Act , 1988",
+   "at": 1790012888
+  },
+  "mva:163": {
+   "docid": "100153505",
+   "title": "Section 163 in The Motor Vehicles Act , 1988",
+   "at": 1790012889
+  },
+  "mva:164": {
+   "docid": "175467574",
+   "title": "Section 164 in The Motor Vehicles Act , 1988",
+   "at": 1790012888
+  },
+  "mva:165": {
+   "docid": "69683245",
+   "title": "Section 165 in The Motor Vehicles Act , 1988",
+   "at": 1790012889
+  },
+  "mva:166": {
+   "docid": "136948773",
+   "title": "Section 166 in The Motor Vehicles Act , 1988",
+   "at": 1790012892
+  },
+  "mva:167": {
+   "docid": "62721862",
+   "title": "Section 167 in The Motor Vehicles Act , 1988",
+   "at": 1790012890
+  },
+  "mva:168": {
+   "docid": "41160316",
+   "title": "Section 168 in The Motor Vehicles Act , 1988",
+   "at": 1790012891
+  },
+  "mva:169": {
+   "docid": "11278644",
+   "title": "Section 169 in The Motor Vehicles Act , 1988",
+   "at": 1790012890
+  },
+  "mva:17": {
+   "docid": "1468618",
+   "title": "Section 17 in The Motor Vehicles Act , 1988",
+   "at": 1790012808
+  },
+  "mva:170": {
+   "docid": "184045376",
+   "title": "Section 170 in The Motor Vehicles Act , 1988",
+   "at": 1790012892
+  },
+  "mva:171": {
+   "docid": "37054924",
+   "title": "Section 171 in The Motor Vehicles Act , 1988",
+   "at": 1790012892
+  },
+  "mva:172": {
+   "docid": "95369005",
+   "title": "Section 172 in The Motor Vehicles Act , 1988",
+   "at": 1790012893
+  },
+  "mva:173": {
+   "docid": "147367599",
+   "title": "Section 173 in The Motor Vehicles Act , 1988",
+   "at": 1790012896
+  },
+  "mva:174": {
+   "docid": "61651107",
+   "title": "Section 174 in The Motor Vehicles Act , 1988",
+   "at": 1790012894
+  },
+  "mva:175": {
+   "docid": "148276987",
+   "title": "Section 175 in The Motor Vehicles Act , 1988",
+   "at": 1790012894
+  },
+  "mva:176": {
+   "docid": "66125163",
+   "title": "Section 176 in The Motor Vehicles Act , 1988",
+   "at": 1790012895
+  },
+  "mva:177": {
+   "docid": "103867614",
+   "title": "Section 177 in The Motor Vehicles Act , 1988",
+   "at": 1790012896
+  },
+  "mva:178": {
+   "docid": "122261910",
+   "title": "Section 178 in The Motor Vehicles Act , 1988",
+   "at": 1790012896
+  },
+  "mva:179": {
+   "docid": "133167304",
+   "title": "Section 179 in The Motor Vehicles Act , 1988",
+   "at": 1790012897
+  },
+  "mva:18": {
+   "docid": "1067037",
+   "title": "Section 18 in The Motor Vehicles Act , 1988",
+   "at": 1790012808
+  },
+  "mva:180": {
+   "docid": "113568065",
+   "title": "Section 180 in The Motor Vehicles Act , 1988",
+   "at": 1790012898
+  },
+  "mva:181": {
+   "docid": "31261615",
+   "title": "Section 181 in The Motor Vehicles Act , 1988",
+   "at": 1790012898
+  },
+  "mva:182": {
+   "docid": "161763489",
+   "title": "Section 182 in The Motor Vehicles Act , 1988",
+   "at": 1790012898
+  },
+  "mva:183": {
+   "docid": "59207046",
+   "title": "Section 183 in The Motor Vehicles Act , 1988",
+   "at": 1790012899
+  },
+  "mva:184": {
+   "docid": "9295814",
+   "title": "Section 184 in The Motor Vehicles Act , 1988",
+   "at": 1790012899
+  },
+  "mva:185": {
+   "docid": "139481594",
+   "title": "Section 185 in The Motor Vehicles Act , 1988",
+   "at": 1790012899
+  },
+  "mva:186": {
+   "docid": "23841300",
+   "title": "Section 186 in The Motor Vehicles Act , 1988",
+   "at": 1790012899
+  },
+  "mva:187": {
+   "docid": "20578524",
+   "title": "Section 187 in The Motor Vehicles Act , 1988",
+   "at": 1790012900
+  },
+  "mva:188": {
+   "docid": "85113757",
+   "title": "Section 188 in The Motor Vehicles Act , 1988",
+   "at": 1790012900
+  },
+  "mva:189": {
+   "docid": "62441994",
+   "title": "Section 189 in The Motor Vehicles Act , 1988",
+   "at": 1790012901
+  },
+  "mva:19": {
+   "docid": "857915",
+   "title": "Section 19 in The Motor Vehicles Act , 1988",
+   "at": 1790012808
+  },
+  "mva:190": {
+   "docid": "32624072",
+   "title": "Section 190 in The Motor Vehicles Act , 1988",
+   "at": 1790012901
+  },
+  "mva:191": {
+   "docid": null,
+   "title": null,
+   "at": 1790012903
+  },
+  "mva:192": {
+   "docid": null,
+   "title": null,
+   "at": 1790012903
+  },
+  "mva:193": {
+   "docid": "39608304",
+   "title": "Section 193 in The Motor Vehicles Act , 1988",
+   "at": 1790012903
+  },
+  "mva:194": {
+   "docid": "132499746",
+   "title": "Section 194 in The Motor Vehicles Act , 1988",
+   "at": 1790012903
+  },
+  "mva:195": {
+   "docid": null,
+   "title": null,
+   "at": 1790012906
+  },
+  "mva:196": {
+   "docid": "125316407",
+   "title": "Section 196 in The Motor Vehicles Act , 1988",
+   "at": 1790012905
+  },
+  "mva:197": {
+   "docid": "190006712",
+   "title": "Section 197 in The Motor Vehicles Act , 1988",
+   "at": 1790012905
+  },
+  "mva:198": {
+   "docid": "182983199",
+   "title": "Section 198 in The Motor Vehicles Act , 1988",
+   "at": 1790012905
+  },
+  "mva:199": {
+   "docid": "145224594",
+   "title": "Section 199 in The Motor Vehicles Act , 1988",
+   "at": 1790012906
+  },
+  "mva:2": {
+   "docid": "946665",
+   "title": "Section 2 in The Motor Vehicles Act , 1988",
+   "at": 1790012801
+  },
+  "mva:20": {
+   "docid": "1110542",
+   "title": "Section 20 in The Motor Vehicles Act , 1988",
+   "at": 1790012811
+  },
+  "mva:200": {
+   "docid": "106194272",
+   "title": "Section 200 in The Motor Vehicles Act , 1988",
+   "at": 1790012907
+  },
+  "mva:201": {
+   "docid": "6137612",
+   "title": "Section 201 in The Motor Vehicles Act , 1988",
+   "at": 1790012907
+  },
+  "mva:202": {
+   "docid": "37876545",
+   "title": "Section 202 in The Motor Vehicles Act , 1988",
+   "at": 1790012907
+  },
+  "mva:203": {
+   "docid": "11563856",
+   "title": "Section 203 in The Motor Vehicles Act , 1988",
+   "at": 1790012908
+  },
+  "mva:204": {
+   "docid": "24716656",
+   "title": "Section 204 in The Motor Vehicles Act , 1988",
+   "at": 1790012908
+  },
+  "mva:205": {
+   "docid": "108087372",
+   "title": "Section 205 in The Motor Vehicles Act , 1988",
+   "at": 1790012909
+  },
+  "mva:206": {
+   "docid": "43266808",
+   "title": "Section 206 in The Motor Vehicles Act , 1988",
+   "at": 1790012909
+  },
+  "mva:207": {
+   "docid": "71308733",
+   "title": "Section 207 in The Motor Vehicles Act , 1988",
+   "at": 1790012910
+  },
+  "mva:208": {
+   "docid": "86587000",
+   "title": "Section 208 in The Motor Vehicles Act , 1988",
+   "at": 1790012910
+  },
+  "mva:209": {
+   "docid": "77999978",
+   "title": "Section 209 in The Motor Vehicles Act , 1988",
+   "at": 1790012911
+  },
+  "mva:21": {
+   "docid": "826684",
+   "title": "Section 21 in The Motor Vehicles Act , 1988",
+   "at": 1790012810
+  },
+  "mva:210": {
+   "docid": "198319919",
+   "title": "Section 210 in The Motor Vehicles Act , 1988",
+   "at": 1790012911
+  },
+  "mva:211": {
+   "docid": "1627125",
+   "title": "Section 211 in The Motor Vehicles Act , 1988",
+   "at": 1790012912
+  },
+  "mva:212": {
+   "docid": "196226040",
+   "title": "Section 212 in The Motor Vehicles Act , 1988",
+   "at": 1790012912
+  },
+  "mva:213": {
+   "docid": "135831293",
+   "title": "Section 213 in The Motor Vehicles Act , 1988",
+   "at": 1790012913
+  },
+  "mva:214": {
+   "docid": "113949215",
+   "title": "Section 214 in The Motor Vehicles Act , 1988",
+   "at": 1790012913
+  },
+  "mva:215": {
+   "docid": "22364072",
+   "title": "Section 215 in The Motor Vehicles Act , 1988",
+   "at": 1790012913
+  },
+  "mva:216": {
+   "docid": "38485913",
+   "title": "Section 216 in The Motor Vehicles Act , 1988",
+   "at": 1790012914
+  },
+  "mva:217": {
+   "docid": "115976756",
+   "title": "Section 217 in The Motor Vehicles Act , 1988",
+   "at": 1790012914
+  },
+  "mva:22": {
+   "docid": "1596311",
+   "title": "Section 22 in The Motor Vehicles Act , 1988",
+   "at": 1790012811
+  },
+  "mva:23": {
+   "docid": "197737",
+   "title": "Section 23 in The Motor Vehicles Act , 1988",
+   "at": 1790012811
+  },
+  "mva:24": {
+   "docid": "114059",
+   "title": "Section 24 in The Motor Vehicles Act , 1988",
+   "at": 1790012813
+  },
+  "mva:25": {
+   "docid": "1943701",
+   "title": "Section 25 in The Motor Vehicles Act , 1988",
+   "at": 1790012813
+  },
+  "mva:26": {
+   "docid": null,
+   "title": null,
+   "at": 1790012814
+  },
+  "mva:27": {
+   "docid": "268733",
+   "title": "Section 27 in The Motor Vehicles Act , 1988",
+   "at": 1790012813
+  },
+  "mva:28": {
+   "docid": "1219856",
+   "title": "Section 28 in The Motor Vehicles Act , 1988",
+   "at": 1790012815
+  },
+  "mva:29": {
+   "docid": "1047314",
+   "title": "Section 29 in The Motor Vehicles Act , 1988",
+   "at": 1790012815
+  },
+  "mva:3": {
+   "docid": "935822",
+   "title": "Section 3 in The Motor Vehicles Act , 1988",
+   "at": 1790012802
+  },
+  "mva:30": {
+   "docid": "1429621",
+   "title": "Section 30 in The Motor Vehicles Act , 1988",
+   "at": 1790012817
+  },
+  "mva:31": {
+   "docid": "1222942",
+   "title": "Section 31 in The Motor Vehicles Act , 1988",
+   "at": 1790012816
+  },
+  "mva:32": {
+   "docid": "194141",
+   "title": "Section 32 in The Motor Vehicles Act , 1988",
+   "at": 1790012817
+  },
+  "mva:33": {
+   "docid": "884371",
+   "title": "Section 33 in The Motor Vehicles Act , 1988",
+   "at": 1790012817
+  },
+  "mva:34": {
+   "docid": "1543146",
+   "title": "Section 34 in The Motor Vehicles Act , 1988",
+   "at": 1790012818
+  },
+  "mva:35": {
+   "docid": "793245",
+   "title": "Section 35 in The Motor Vehicles Act , 1988",
+   "at": 1790012819
+  },
+  "mva:36": {
+   "docid": "1797867",
+   "title": "Section 36 in The Motor Vehicles Act , 1988",
+   "at": 1790012819
+  },
+  "mva:37": {
+   "docid": "170640361",
+   "title": "Section 37 in The Motor Vehicles Act , 1988",
+   "at": 1790012819
+  },
+  "mva:38": {
+   "docid": "1266268",
+   "title": "Section 38 in The Motor Vehicles Act , 1988",
+   "at": 1790012820
+  },
+  "mva:39": {
+   "docid": "1474456",
+   "title": "Section 39 in The Motor Vehicles Act , 1988",
+   "at": 1790012820
+  },
+  "mva:4": {
+   "docid": "8820",
+   "title": "Section 4 in The Motor Vehicles Act , 1988",
+   "at": 1790012801
+  },
+  "mva:40": {
+   "docid": "1336717",
+   "title": "Section 40 in The Motor Vehicles Act , 1988",
+   "at": 1790012822
+  },
+  "mva:41": {
+   "docid": "298258",
+   "title": "Section 41 in The Motor Vehicles Act , 1988",
+   "at": 1790012821
+  },
+  "mva:42": {
+   "docid": "1137760",
+   "title": "Section 42 in The Motor Vehicles Act , 1988",
+   "at": 1790012822
+  },
+  "mva:43": {
+   "docid": null,
+   "title": null,
+   "at": 1790012823
+  },
+  "mva:44": {
+   "docid": null,
+   "title": null,
+   "at": 1790012824
+  },
+  "mva:45": {
+   "docid": "663780",
+   "title": "Section 45 in The Motor Vehicles Act , 1988",
+   "at": 1790012824
+  },
+  "mva:46": {
+   "docid": "46530",
+   "title": "Section 46 in The Motor Vehicles Act , 1988",
+   "at": 1790012824
+  },
+  "mva:47": {
+   "docid": "65895302",
+   "title": "Section 47 in The Motor Vehicles Act , 1988",
+   "at": 1790012824
+  },
+  "mva:48": {
+   "docid": "973092",
+   "title": "Section 48 in The Motor Vehicles Act , 1988",
+   "at": 1790012825
+  },
+  "mva:49": {
+   "docid": "1289556",
+   "title": "Section 49 in The Motor Vehicles Act , 1988",
+   "at": 1790012825
+  },
+  "mva:5": {
+   "docid": "1542963",
+   "title": "Section 5 in The Motor Vehicles Act , 1988",
+   "at": 1790012802
+  },
+  "mva:50": {
+   "docid": "613433",
+   "title": "Section 50 in The Motor Vehicles Act , 1988",
+   "at": 1790012827
+  },
+  "mva:51": {
+   "docid": "187702",
+   "title": "Section 51 in The Motor Vehicles Act , 1988",
+   "at": 1790012826
+  },
+  "mva:52": {
+   "docid": null,
+   "title": null,
+   "at": 1790012828
+  },
+  "mva:53": {
+   "docid": "827342",
+   "title": "Section 53 in The Motor Vehicles Act , 1988",
+   "at": 1790012828
+  },
+  "mva:54": {
+   "docid": "823195",
+   "title": "Section 54 in The Motor Vehicles Act , 1988",
+   "at": 1790012828
+  },
+  "mva:55": {
+   "docid": "1118845",
+   "title": "Section 55 in The Motor Vehicles Act , 1988",
+   "at": 1790012828
+  },
+  "mva:56": {
+   "docid": "450783",
+   "title": "Section 56 in The Motor Vehicles Act , 1988",
+   "at": 1790012830
+  },
+  "mva:57": {
+   "docid": "95183",
+   "title": "Section 57 in The Motor Vehicles Act , 1988",
+   "at": 1790012830
+  },
+  "mva:58": {
+   "docid": "282296",
+   "title": "Section 58 in The Motor Vehicles Act , 1988",
+   "at": 1790012831
+  },
+  "mva:59": {
+   "docid": "1213159",
+   "title": "Section 59 in The Motor Vehicles Act , 1988",
+   "at": 1790012831
+  },
+  "mva:6": {
+   "docid": "865156",
+   "title": "Section 6 in The Motor Vehicles Act , 1988",
+   "at": 1790012803
+  },
+  "mva:60": {
+   "docid": "508327",
+   "title": "Section 60 in The Motor Vehicles Act , 1988",
+   "at": 1790012832
+  },
+  "mva:61": {
+   "docid": "1971512",
+   "title": "Section 61 in The Motor Vehicles Act , 1988",
+   "at": 1790012832
+  },
+  "mva:62": {
+   "docid": "936639",
+   "title": "Section 62 in The Motor Vehicles Act , 1988",
+   "at": 1790012833
+  },
+  "mva:63": {
+   "docid": null,
+   "title": null,
+   "at": 1790012835
+  },
+  "mva:64": {
+   "docid": "590756",
+   "title": "Section 64 in The Motor Vehicles Act , 1988",
+   "at": 1790012834
+  },
+  "mva:65": {
+   "docid": "1259156",
+   "title": "Section 65 in The Motor Vehicles Act , 1988",
+   "at": 1790012835
+  },
+  "mva:66": {
+   "docid": "770795",
+   "title": "Section 66 in The Motor Vehicles Act , 1988",
+   "at": 1790012835
+  },
+  "mva:67": {
+   "docid": "694875",
+   "title": "Section 67 in The Motor Vehicles Act , 1988",
+   "at": 1790012837
+  },
+  "mva:68": {
+   "docid": "1140839",
+   "title": "Section 68 in The Motor Vehicles Act , 1988",
+   "at": 1790012837
+  },
+  "mva:69": {
+   "docid": "118713",
+   "title": "Section 69 in The Motor Vehicles Act , 1988",
+   "at": 1790012838
+  },
+  "mva:7": {
+   "docid": "992009",
+   "title": "Section 7 in The Motor Vehicles Act , 1988",
+   "at": 1790012803
+  },
+  "mva:70": {
+   "docid": "1006685",
+   "title": "Section 70 in The Motor Vehicles Act , 1988",
+   "at": 1790012838
+  },
+  "mva:71": {
+   "docid": "1797640",
+   "title": "Section 71 in The Motor Vehicles Act , 1988",
+   "at": 1790012839
+  },
+  "mva:72": {
+   "docid": "10391",
+   "title": "Section 72 in The Motor Vehicles Act , 1988",
+   "at": 1790012839
+  },
+  "mva:73": {
+   "docid": "1899504",
+   "title": "Section 73 in The Motor Vehicles Act , 1988",
+   "at": 1790012840
+  },
+  "mva:74": {
+   "docid": "1869576",
+   "title": "Section 74 in The Motor Vehicles Act , 1988",
+   "at": 1790012840
+  },
+  "mva:75": {
+   "docid": "718475",
+   "title": "Section 75 in The Motor Vehicles Act , 1988",
+   "at": 1790012841
+  },
+  "mva:76": {
+   "docid": "836863",
+   "title": "Section 76 in The Motor Vehicles Act , 1988",
+   "at": 1790012842
+  },
+  "mva:77": {
+   "docid": "1082950",
+   "title": "Section 77 in The Motor Vehicles Act , 1988",
+   "at": 1790012842
+  },
+  "mva:78": {
+   "docid": "1317647",
+   "title": "Section 78 in The Motor Vehicles Act , 1988",
+   "at": 1790012842
+  },
+  "mva:79": {
+   "docid": "858169",
+   "title": "Section 79 in The Motor Vehicles Act , 1988",
+   "at": 1790012844
+  },
+  "mva:8": {
+   "docid": "1626654",
+   "title": "Section 8 in The Motor Vehicles Act , 1988",
+   "at": 1790012803
+  },
+  "mva:80": {
+   "docid": "1785632",
+   "title": "Section 80 in The Motor Vehicles Act , 1988",
+   "at": 1790012844
+  },
+  "mva:81": {
+   "docid": "411497",
+   "title": "Section 81 in The Motor Vehicles Act , 1988",
+   "at": 1790012844
+  },
+  "mva:82": {
+   "docid": "1954062",
+   "title": "Section 82 in The Motor Vehicles Act , 1988",
+   "at": 1790012844
+  },
+  "mva:83": {
+   "docid": "607852",
+   "title": "Section 83 in The Motor Vehicles Act , 1988",
+   "at": 1790012846
+  },
+  "mva:84": {
+   "docid": "143625",
+   "title": "Section 84 in The Motor Vehicles Act , 1988",
+   "at": 1790012847
+  },
+  "mva:85": {
+   "docid": "494672",
+   "title": "Section 85 in The Motor Vehicles Act , 1988",
+   "at": 1790012847
+  },
+  "mva:86": {
+   "docid": "133663704",
+   "title": "Section 86 in The Motor Vehicles Act , 1988",
+   "at": 1790012847
+  },
+  "mva:87": {
+   "docid": "1817364",
+   "title": "Section 87 in The Motor Vehicles Act , 1988",
+   "at": 1790012848
+  },
+  "mva:88": {
+   "docid": "1935444",
+   "title": "Section 88 in The Motor Vehicles Act , 1988",
+   "at": 1790012849
+  },
+  "mva:89": {
+   "docid": "1264594",
+   "title": "Section 89 in The Motor Vehicles Act , 1988",
+   "at": 1790012849
+  },
+  "mva:9": {
+   "docid": "877730",
+   "title": "Section 9 in The Motor Vehicles Act , 1988",
+   "at": 1790012803
+  },
+  "mva:90": {
+   "docid": "1890426",
+   "title": "Section 90 in The Motor Vehicles Act , 1988",
+   "at": 1790012849
+  },
+  "mva:91": {
+   "docid": "1101203",
+   "title": "Section 91 in The Motor Vehicles Act , 1988",
+   "at": 1790012850
+  },
+  "mva:92": {
+   "docid": "649909",
+   "title": "Section 92 in The Motor Vehicles Act , 1988",
+   "at": 1790012851
+  },
+  "mva:93": {
+   "docid": "1798953",
+   "title": "Section 93 in The Motor Vehicles Act , 1988",
+   "at": 1790012851
+  },
+  "mva:94": {
+   "docid": "1047483",
+   "title": "Section 94 in The Motor Vehicles Act , 1988",
+   "at": 1790012852
+  },
+  "mva:95": {
+   "docid": "1323112",
+   "title": "Section 95 in The Motor Vehicles Act , 1988",
+   "at": 1790012853
+  },
+  "mva:96": {
+   "docid": "1550024",
+   "title": "Section 96 in The Motor Vehicles Act , 1988",
+   "at": 1790012853
+  },
+  "mva:97": {
+   "docid": "1697807",
+   "title": "Section 97 in The Motor Vehicles Act , 1988",
+   "at": 1790012853
+  },
+  "mva:98": {
+   "docid": null,
+   "title": null,
+   "at": 1790012855
+  },
+  "mva:99": {
+   "docid": "1615733",
+   "title": "Section 99 in The Motor Vehicles Act , 1988",
+   "at": 1790012855
+  },
+  "nia:1": {
+   "docid": "621484",
+   "title": "Section 1 in The Negotiable Instruments Act , 1881",
+   "at": 1790012718
+  },
+  "nia:10": {
+   "docid": "609790",
+   "title": "Section 10 in The Negotiable Instruments Act , 1881",
+   "at": 1790012726
+  },
+  "nia:100": {
+   "docid": "1525572",
+   "title": "Section 100 in The Negotiable Instruments Act , 1881",
+   "at": 1790012768
+  },
+  "nia:101": {
+   "docid": "980766",
+   "title": "Section 101 in The Negotiable Instruments Act , 1881",
+   "at": 1790012768
+  },
+  "nia:102": {
+   "docid": "1827262",
+   "title": "Section 102 in The Negotiable Instruments Act , 1881",
+   "at": 1790012768
+  },
+  "nia:103": {
+   "docid": "1403778",
+   "title": "Section 103 in The Negotiable Instruments Act , 1881",
+   "at": 1790012769
+  },
+  "nia:104": {
+   "docid": "878104",
+   "title": "Section 104 in The Negotiable Instruments Act , 1881",
+   "at": 1790012769
+  },
+  "nia:105": {
+   "docid": "1373883",
+   "title": "Section 105 in The Negotiable Instruments Act , 1881",
+   "at": 1790012769
+  },
+  "nia:106": {
+   "docid": "1091975",
+   "title": "Section 106 in The Negotiable Instruments Act , 1881",
+   "at": 1790012769
+  },
+  "nia:107": {
+   "docid": "12007",
+   "title": "Section 107 in The Negotiable Instruments Act , 1881",
+   "at": 1790012770
+  },
+  "nia:108": {
+   "docid": "260279",
+   "title": "Section 108 in The Negotiable Instruments Act , 1881",
+   "at": 1790012770
+  },
+  "nia:109": {
+   "docid": "1905508",
+   "title": "Section 109 in The Negotiable Instruments Act , 1881",
+   "at": 1790012771
+  },
+  "nia:11": {
+   "docid": "1024583",
+   "title": "Section 11 in The Negotiable Instruments Act , 1881",
+   "at": 1790012725
+  },
+  "nia:110": {
+   "docid": "289247",
+   "title": "Section 110 in The Negotiable Instruments Act , 1881",
+   "at": 1790012771
+  },
+  "nia:111": {
+   "docid": "678539",
+   "title": "Section 111 in The Negotiable Instruments Act , 1881",
+   "at": 1790012772
+  },
+  "nia:112": {
+   "docid": "1726534",
+   "title": "Section 112 in The Negotiable Instruments Act , 1881",
+   "at": 1790012772
+  },
+  "nia:113": {
+   "docid": "1743823",
+   "title": "Section 113 in The Negotiable Instruments Act , 1881",
+   "at": 1790012772
+  },
+  "nia:114": {
+   "docid": "114119",
+   "title": "Section 114 in The Negotiable Instruments Act , 1881",
+   "at": 1790012772
+  },
+  "nia:115": {
+   "docid": "170222",
+   "title": "Section 115 in The Negotiable Instruments Act , 1881",
+   "at": 1790012773
+  },
+  "nia:116": {
+   "docid": "1930756",
+   "title": "Section 116 in The Negotiable Instruments Act , 1881",
+   "at": 1790012773
+  },
+  "nia:117": {
+   "docid": "313370",
+   "title": "Section 117 in The Negotiable Instruments Act , 1881",
+   "at": 1790012773
+  },
+  "nia:118": {
+   "docid": "517539",
+   "title": "Section 118 in The Negotiable Instruments Act , 1881",
+   "at": 1790012775
+  },
+  "nia:119": {
+   "docid": "746429",
+   "title": "Section 119 in The Negotiable Instruments Act , 1881",
+   "at": 1790012774
+  },
+  "nia:12": {
+   "docid": "1033776",
+   "title": "Section 12 in The Negotiable Instruments Act , 1881",
+   "at": 1790012725
+  },
+  "nia:120": {
+   "docid": "1869881",
+   "title": "Section 120 in The Negotiable Instruments Act , 1881",
+   "at": 1790012774
+  },
+  "nia:121": {
+   "docid": "312894",
+   "title": "Section 121 in The Negotiable Instruments Act , 1881",
+   "at": 1790012774
+  },
+  "nia:122": {
+   "docid": "825092",
+   "title": "Section 122 in The Negotiable Instruments Act , 1881",
+   "at": 1790012775
+  },
+  "nia:123": {
+   "docid": "1117828",
+   "title": "Section 123 in The Negotiable Instruments Act , 1881",
+   "at": 1790012776
+  },
+  "nia:124": {
+   "docid": "1269249",
+   "title": "Section 124 in The Negotiable Instruments Act , 1881",
+   "at": 1790012776
+  },
+  "nia:125": {
+   "docid": "1912303",
+   "title": "Section 125 in The Negotiable Instruments Act , 1881",
+   "at": 1790012776
+  },
+  "nia:126": {
+   "docid": "1441805",
+   "title": "Section 126 in The Negotiable Instruments Act , 1881",
+   "at": 1790012776
+  },
+  "nia:127": {
+   "docid": "1567385",
+   "title": "Section 127 in The Negotiable Instruments Act , 1881",
+   "at": 1790012777
+  },
+  "nia:128": {
+   "docid": "732670",
+   "title": "Section 128 in The Negotiable Instruments Act , 1881",
+   "at": 1790012777
+  },
+  "nia:129": {
+   "docid": "1791318",
+   "title": "Section 129 in The Negotiable Instruments Act , 1881",
+   "at": 1790012777
+  },
+  "nia:13": {
+   "docid": "1275897",
+   "title": "Section 13 in The Negotiable Instruments Act , 1881",
+   "at": 1790012727
+  },
+  "nia:130": {
+   "docid": "1189554",
+   "title": "Section 130 in The Negotiable Instruments Act , 1881",
+   "at": 1790012777
+  },
+  "nia:131": {
+   "docid": "1751822",
+   "title": "Section 131 in The Negotiable Instruments Act , 1881",
+   "at": 1790012779
+  },
+  "nia:132": {
+   "docid": "1024006",
+   "title": "Section 132 in The Negotiable Instruments Act , 1881",
+   "at": 1790012779
+  },
+  "nia:133": {
+   "docid": "132039",
+   "title": "Section 133 in The Negotiable Instruments Act , 1881",
+   "at": 1790012778
+  },
+  "nia:134": {
+   "docid": "505928",
+   "title": "Section 134 in The Negotiable Instruments Act , 1881",
+   "at": 1790012779
+  },
+  "nia:135": {
+   "docid": "995341",
+   "title": "Section 135 in The Negotiable Instruments Act , 1881",
+   "at": 1790012779
+  },
+  "nia:136": {
+   "docid": "916917",
+   "title": "Section 136 in The Negotiable Instruments Act , 1881",
+   "at": 1790012780
+  },
+  "nia:137": {
+   "docid": "539290",
+   "title": "Section 137 in The Negotiable Instruments Act , 1881",
+   "at": 1790012780
+  },
+  "nia:138": {
+   "docid": "1823824",
+   "title": "Section 138 in The Negotiable Instruments Act , 1881",
+   "at": 1790012783
+  },
+  "nia:139": {
+   "docid": "268919",
+   "title": "Section 139 in The Negotiable Instruments Act , 1881",
+   "at": 1790012783
+  },
+  "nia:14": {
+   "docid": "173961",
+   "title": "Section 14 in The Negotiable Instruments Act , 1881",
+   "at": 1790012729
+  },
+  "nia:140": {
+   "docid": "1685033",
+   "title": "Section 140 in The Negotiable Instruments Act , 1881",
+   "at": 1790012781
+  },
+  "nia:141": {
+   "docid": "686130",
+   "title": "Section 141 in The Negotiable Instruments Act , 1881",
+   "at": 1790012782
+  },
+  "nia:142": {
+   "docid": "595945",
+   "title": "Section 142 in The Negotiable Instruments Act , 1881",
+   "at": 1790012783
+  },
+  "nia:15": {
+   "docid": "1370898",
+   "title": "Section 15 in The Negotiable Instruments Act , 1881",
+   "at": 1790012729
+  },
+  "nia:16": {
+   "docid": "1426531",
+   "title": "Section 16 in The Negotiable Instruments Act , 1881",
+   "at": 1790012728
+  },
+  "nia:17": {
+   "docid": "1269397",
+   "title": "Section 17 in The Negotiable Instruments Act , 1881",
+   "at": 1790012730
+  },
+  "nia:18": {
+   "docid": "1423396",
+   "title": "Section 18 in The Negotiable Instruments Act , 1881",
+   "at": 1790012731
+  },
+  "nia:19": {
+   "docid": "1412626",
+   "title": "Section 19 in The Negotiable Instruments Act , 1881",
+   "at": 1790012732
+  },
+  "nia:2": {
+   "docid": "328668",
+   "title": "Section 2 in The Negotiable Instruments Act , 1881",
+   "at": 1790012718
+  },
+  "nia:20": {
+   "docid": "232831",
+   "title": "Section 20 in The Negotiable Instruments Act , 1881",
+   "at": 1790012731
+  },
+  "nia:21": {
+   "docid": "448598",
+   "title": "Section 21 in The Negotiable Instruments Act , 1881",
+   "at": 1790012732
+  },
+  "nia:22": {
+   "docid": "1550523",
+   "title": "Section 22 in The Negotiable Instruments Act , 1881",
+   "at": 1790012733
+  },
+  "nia:23": {
+   "docid": "1096364",
+   "title": "Section 23 in The Negotiable Instruments Act , 1881",
+   "at": 1790012734
+  },
+  "nia:24": {
+   "docid": "1141392",
+   "title": "Section 24 in The Negotiable Instruments Act , 1881",
+   "at": 1790012735
+  },
+  "nia:25": {
+   "docid": "1339273",
+   "title": "Section 25 in The Negotiable Instruments Act , 1881",
+   "at": 1790012735
+  },
+  "nia:26": {
+   "docid": "1081676",
+   "title": "Section 26 in The Negotiable Instruments Act , 1881",
+   "at": 1790012736
+  },
+  "nia:27": {
+   "docid": "1887096",
+   "title": "Section 27 in The Negotiable Instruments Act , 1881",
+   "at": 1790012736
+  },
+  "nia:28": {
+   "docid": "1305997",
+   "title": "Section 28 in The Negotiable Instruments Act , 1881",
+   "at": 1790012737
+  },
+  "nia:29": {
+   "docid": "1339321",
+   "title": "Section 29 in The Negotiable Instruments Act , 1881",
+   "at": 1790012737
+  },
+  "nia:3": {
+   "docid": "1485731",
+   "title": "Section 3 in The Negotiable Instruments Act , 1881",
+   "at": 1790012718
+  },
+  "nia:30": {
+   "docid": "1968425",
+   "title": "Section 30 in The Negotiable Instruments Act , 1881",
+   "at": 1790012739
+  },
+  "nia:31": {
+   "docid": "1343737",
+   "title": "Section 31 in The Negotiable Instruments Act , 1881",
+   "at": 1790012738
+  },
+  "nia:32": {
+   "docid": "1578249",
+   "title": "Section 32 in The Negotiable Instruments Act , 1881",
+   "at": 1790012739
+  },
+  "nia:33": {
+   "docid": "880124",
+   "title": "Section 33 in The Negotiable Instruments Act , 1881",
+   "at": 1790012740
+  },
+  "nia:34": {
+   "docid": "1385350",
+   "title": "Section 34 in The Negotiable Instruments Act , 1881",
+   "at": 1790012740
+  },
+  "nia:35": {
+   "docid": "1036533",
+   "title": "Section 35 in The Negotiable Instruments Act , 1881",
+   "at": 1790012741
+  },
+  "nia:36": {
+   "docid": "589493",
+   "title": "Section 36 in The Negotiable Instruments Act , 1881",
+   "at": 1790012741
+  },
+  "nia:37": {
+   "docid": "1758502",
+   "title": "Section 37 in The Negotiable Instruments Act , 1881",
+   "at": 1790012742
+  },
+  "nia:38": {
+   "docid": "717368",
+   "title": "Section 38 in The Negotiable Instruments Act , 1881",
+   "at": 1790012742
+  },
+  "nia:39": {
+   "docid": "514499",
+   "title": "Section 39 in The Negotiable Instruments Act , 1881",
+   "at": 1790012743
+  },
+  "nia:4": {
+   "docid": "148539",
+   "title": "Section 4 in The Negotiable Instruments Act , 1881",
+   "at": 1790012718
+  },
+  "nia:40": {
+   "docid": "339685",
+   "title": "Section 40 in The Negotiable Instruments Act , 1881",
+   "at": 1790012743
+  },
+  "nia:41": {
+   "docid": "1932246",
+   "title": "Section 41 in The Negotiable Instruments Act , 1881",
+   "at": 1790012744
+  },
+  "nia:42": {
+   "docid": "1218058",
+   "title": "Section 42 in The Negotiable Instruments Act , 1881",
+   "at": 1790012744
+  },
+  "nia:43": {
+   "docid": "254432",
+   "title": "Section 43 in The Negotiable Instruments Act , 1881",
+   "at": 1790012744
+  },
+  "nia:44": {
+   "docid": "203215",
+   "title": "Section 44 in The Negotiable Instruments Act , 1881",
+   "at": 1790012745
+  },
+  "nia:45": {
+   "docid": "848618",
+   "title": "Section 45 in The Negotiable Instruments Act , 1881",
+   "at": 1790012745
+  },
+  "nia:46": {
+   "docid": "1733647",
+   "title": "Section 46 in The Negotiable Instruments Act , 1881",
+   "at": 1790012746
+  },
+  "nia:47": {
+   "docid": "1821721",
+   "title": "Section 47 in The Negotiable Instruments Act , 1881",
+   "at": 1790012746
+  },
+  "nia:48": {
+   "docid": "173506",
+   "title": "Section 48 in The Negotiable Instruments Act , 1881",
+   "at": 1790012746
+  },
+  "nia:49": {
+   "docid": "231549",
+   "title": "Section 49 in The Negotiable Instruments Act , 1881",
+   "at": 1790012747
+  },
+  "nia:5": {
+   "docid": "6856",
+   "title": "Section 5 in The Negotiable Instruments Act , 1881",
+   "at": 1790012721
+  },
+  "nia:50": {
+   "docid": "765859",
+   "title": "Section 50 in The Negotiable Instruments Act , 1881",
+   "at": 1790012748
+  },
+  "nia:51": {
+   "docid": "290038",
+   "title": "Section 51 in The Negotiable Instruments Act , 1881",
+   "at": 1790012748
+  },
+  "nia:52": {
+   "docid": "890910",
+   "title": "Section 52 in The Negotiable Instruments Act , 1881",
+   "at": 1790012748
+  },
+  "nia:53": {
+   "docid": "1927368",
+   "title": "Section 53 in The Negotiable Instruments Act , 1881",
+   "at": 1790012749
+  },
+  "nia:54": {
+   "docid": "1646266",
+   "title": "Section 54 in The Negotiable Instruments Act , 1881",
+   "at": 1790012750
+  },
+  "nia:55": {
+   "docid": "983487",
+   "title": "Section 55 in The Negotiable Instruments Act , 1881",
+   "at": 1790012750
+  },
+  "nia:56": {
+   "docid": "1410676",
+   "title": "Section 56 in The Negotiable Instruments Act , 1881",
+   "at": 1790012750
+  },
+  "nia:57": {
+   "docid": "1189000",
+   "title": "Section 57 in The Negotiable Instruments Act , 1881",
+   "at": 1790012750
+  },
+  "nia:58": {
+   "docid": "19527",
+   "title": "Section 58 in The Negotiable Instruments Act , 1881",
+   "at": 1790012751
+  },
+  "nia:59": {
+   "docid": "582445",
+   "title": "Section 59 in The Negotiable Instruments Act , 1881",
+   "at": 1790012752
+  },
+  "nia:6": {
+   "docid": "1012630",
+   "title": "Section 6 in The Negotiable Instruments Act , 1881",
+   "at": 1790012722
+  },
+  "nia:60": {
+   "docid": "146441",
+   "title": "Section 60 in The Negotiable Instruments Act , 1881",
+   "at": 1790012752
+  },
+  "nia:61": {
+   "docid": "1532960",
+   "title": "Section 61 in The Negotiable Instruments Act , 1881",
+   "at": 1790012752
+  },
+  "nia:62": {
+   "docid": "1546841",
+   "title": "Section 62 in The Negotiable Instruments Act , 1881",
+   "at": 1790012753
+  },
+  "nia:63": {
+   "docid": "1462504",
+   "title": "Section 63 in The Negotiable Instruments Act , 1881",
+   "at": 1790012753
+  },
+  "nia:64": {
+   "docid": "57532",
+   "title": "Section 64 in The Negotiable Instruments Act , 1881",
+   "at": 1790012753
+  },
+  "nia:65": {
+   "docid": "1710116",
+   "title": "Section 65 in The Negotiable Instruments Act , 1881",
+   "at": 1790012753
+  },
+  "nia:66": {
+   "docid": "650403",
+   "title": "Section 66 in The Negotiable Instruments Act , 1881",
+   "at": 1790012754
+  },
+  "nia:67": {
+   "docid": "1696397",
+   "title": "Section 67 in The Negotiable Instruments Act , 1881",
+   "at": 1790012755
+  },
+  "nia:68": {
+   "docid": "1930268",
+   "title": "Section 68 in The Negotiable Instruments Act , 1881",
+   "at": 1790012755
+  },
+  "nia:69": {
+   "docid": "1200880",
+   "title": "Section 69 in The Negotiable Instruments Act , 1881",
+   "at": 1790012755
+  },
+  "nia:7": {
+   "docid": "1674475",
+   "title": "Section 7 in The Negotiable Instruments Act , 1881",
+   "at": 1790012722
+  },
+  "nia:70": {
+   "docid": "1518771",
+   "title": "Section 70 in The Negotiable Instruments Act , 1881",
+   "at": 1790012759
+  },
+  "nia:71": {
+   "docid": "906625",
+   "title": "Section 71 in The Negotiable Instruments Act , 1881",
+   "at": 1790012756
+  },
+  "nia:72": {
+   "docid": "829357",
+   "title": "Section 72 in The Negotiable Instruments Act , 1881",
+   "at": 1790012756
+  },
+  "nia:73": {
+   "docid": "1194598",
+   "title": "Section 73 in The Negotiable Instruments Act , 1881",
+   "at": 1790012759
+  },
+  "nia:74": {
+   "docid": "677640",
+   "title": "Section 74 in The Negotiable Instruments Act , 1881",
+   "at": 1790012758
+  },
+  "nia:75": {
+   "docid": "1921961",
+   "title": "Section 75 in The Negotiable Instruments Act , 1881",
+   "at": 1790012758
+  },
+  "nia:76": {
+   "docid": "1426290",
+   "title": "Section 76 in The Negotiable Instruments Act , 1881",
+   "at": 1790012759
+  },
+  "nia:77": {
+   "docid": "1642340",
+   "title": "Section 77 in The Negotiable Instruments Act , 1881",
+   "at": 1790012760
+  },
+  "nia:78": {
+   "docid": "1176934",
+   "title": "Section 78 in The Negotiable Instruments Act , 1881",
+   "at": 1790012760
+  },
+  "nia:79": {
+   "docid": "621673",
+   "title": "Section 79 in The Negotiable Instruments Act , 1881",
+   "at": 1790012760
+  },
+  "nia:8": {
+   "docid": "1033371",
+   "title": "Section 8 in The Negotiable Instruments Act , 1881",
+   "at": 1790012722
+  },
+  "nia:80": {
+   "docid": "1215661",
+   "title": "Section 80 in The Negotiable Instruments Act , 1881",
+   "at": 1790012761
+  },
+  "nia:81": {
+   "docid": "1621425",
+   "title": "Section 81 in The Negotiable Instruments Act , 1881",
+   "at": 1790012761
+  },
+  "nia:82": {
+   "docid": "1217412",
+   "title": "Section 82 in The Negotiable Instruments Act , 1881",
+   "at": 1790012761
+  },
+  "nia:83": {
+   "docid": "422227",
+   "title": "Section 83 in The Negotiable Instruments Act , 1881",
+   "at": 1790012761
+  },
+  "nia:84": {
+   "docid": "27745",
+   "title": "Section 84 in The Negotiable Instruments Act , 1881",
+   "at": 1790012762
+  },
+  "nia:85": {
+   "docid": "1470073",
+   "title": "Section 85 in The Negotiable Instruments Act , 1881",
+   "at": 1790012763
+  },
+  "nia:86": {
+   "docid": "448974",
+   "title": "Section 86 in The Negotiable Instruments Act , 1881",
+   "at": 1790012763
+  },
+  "nia:87": {
+   "docid": "692532",
+   "title": "Section 87 in The Negotiable Instruments Act , 1881",
+   "at": 1790012763
+  },
+  "nia:88": {
+   "docid": "699892",
+   "title": "Section 88 in The Negotiable Instruments Act , 1881",
+   "at": 1790012763
+  },
+  "nia:89": {
+   "docid": "1147393",
+   "title": "Section 89 in The Negotiable Instruments Act , 1881",
+   "at": 1790012764
+  },
+  "nia:9": {
+   "docid": "1680872",
+   "title": "Section 9 in The Negotiable Instruments Act , 1881",
+   "at": 1790012725
+  },
+  "nia:90": {
+   "docid": "654448",
+   "title": "Section 90 in The Negotiable Instruments Act , 1881",
+   "at": 1790012764
+  },
+  "nia:91": {
+   "docid": "891368",
+   "title": "Section 91 in The Negotiable Instruments Act , 1881",
+   "at": 1790012764
+  },
+  "nia:92": {
+   "docid": "1040388",
+   "title": "Section 92 in The Negotiable Instruments Act , 1881",
+   "at": 1790012765
+  },
+  "nia:93": {
+   "docid": "1969054",
+   "title": "Section 93 in The Negotiable Instruments Act , 1881",
+   "at": 1790012766
+  },
+  "nia:94": {
+   "docid": "992144",
+   "title": "Section 94 in The Negotiable Instruments Act , 1881",
+   "at": 1790012766
+  },
+  "nia:95": {
+   "docid": "603478",
+   "title": "Section 95 in The Negotiable Instruments Act , 1881",
+   "at": 1790012766
+  },
+  "nia:96": {
+   "docid": "63256",
+   "title": "Section 96 in The Negotiable Instruments Act , 1881",
+   "at": 1790012766
+  },
+  "nia:97": {
+   "docid": "1696783",
+   "title": "Section 97 in The Negotiable Instruments Act , 1881",
+   "at": 1790012767
+  },
+  "nia:98": {
+   "docid": "676891",
+   "title": "Section 98 in The Negotiable Instruments Act , 1881",
+   "at": 1790012767
+  },
+  "nia:99": {
+   "docid": "621274",
+   "title": "Section 99 in The Negotiable Instruments Act , 1881",
+   "at": 1790012767
+  }
+ }
+}

@@ -29,6 +29,8 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
+from . import source_links
+
 logger = logging.getLogger(__name__)
 
 DATA_DIR = Path(__file__).resolve().parent.parent / "data"
@@ -251,6 +253,12 @@ COMPANIONS: Dict[str, List[str]] = {
     "bns:63": ["64"],
     "bns:64": ["63"],
     "bns:303": ["305"],
+    # Road accidents: rash driving (281) is the offence of the driving itself;
+    # 125 is what applies once someone is actually hurt, and 106 once someone
+    # dies. An accident answer with only one of them understates the exposure.
+    "bns:281": ["125"],
+    "bns:125": ["281"],
+    "bns:106": ["281"],
     # POCSO grades its offences in pairs: the offence, then the aggravated
     # form. Retrieving one without the other gives half the punishment range.
     "pocso:3": ["4"],
@@ -370,12 +378,55 @@ _CONCEPTS: Dict[str, List[str]] = {
 }
 
 
+# Concepts that need TWO things in the question before they fire.
+#
+# A single-phrase key can't express "a road accident AND someone got hurt".
+# The bare word "accident" alone must not pull in criminal vocabulary - "what
+# must a driver do after an accident" is an MV Act duty question and is in
+# the eval (mva-accident-duty -> mva:134). But "I was in an accident, the
+# other driver was injured, what could I face?" is a criminal-liability
+# question: the answer is BNS 125 (hurt by a rash or negligent act) and
+# BNS 281 (rash driving on a public way), alongside the MV Act duties.
+# Those sections never say "accident" or "driver" - they say "rash",
+# "negligent", "hurt", "public way" - so BM25 only ever found the MV Act.
+#
+# Each rule is (groups, tokens). Every group must match (substring, any
+# phrase in the group); then the tokens are appended.
+_ACCIDENT = ("accident", "collision", "collided", "crash", "hit by", "hit a ",
+             "hit someone", "ran over", "knocked down", "rammed")
+_HARM = ("injur", "hurt", "wound", "fracture", "hospital", "bleeding")
+_DEATH = ("died", "dead", "death", "killed", "fatal", "passed away")
+_LIABILITY = ("consequence", "could i face", "will i face", "can i face",
+              "punish", "jail", "prison", "arrest", "charge", "case against",
+              "fir against", "liable", "liability", "offence", "penalty",
+              "what happens to me", "in trouble")
+
+_COMPOUND_CONCEPTS: List[Tuple[Tuple[Tuple[str, ...], ...], List[str]]] = [
+    # accident + someone hurt -> hurt by rash/negligent act, rash driving
+    ((_ACCIDENT, _HARM),
+     ["rash", "rashly", "negligent", "negligently", "endanger", "personal",
+      "safety", "hurt", "grievous", "vehicle", "drives", "public", "way",
+      # MV Act 134: the driver's duty to get the injured person medical help
+      # and report to police. Failing it is itself an offence (s.187).
+      "medical", "attention", "injured", "report"]),
+    # accident + death -> causing death by negligence
+    ((_ACCIDENT, _DEATH),
+     ["rash", "negligent", "negligence", "causing", "death", "vehicle"]),
+    # accident + "what could happen to me" -> the offence and its punishment
+    ((_ACCIDENT, _LIABILITY),
+     ["rash", "negligent", "endanger", "vehicle", "drives", "punished"]),
+]
+
+
 def _expand(query: str) -> List[str]:
     """Tokenize a user query and bolt on statutory synonyms."""
     tokens = _tokenize(query)
     q = query.lower()
     for phrase, extra in _CONCEPTS.items():
         if phrase in q:
+            tokens.extend(extra)
+    for groups, extra in _COMPOUND_CONCEPTS:
+        if all(any(p in q for p in group) for group in groups):
             tokens.extend(extra)
     return tokens
 
@@ -1010,10 +1061,11 @@ def as_source(doc: Dict[str, Any]) -> Dict[str, Any]:
         "date": None,
         "snippet": doc["text"][:300],
         "text": doc["text"] + status,
-        "url": doc["url"] or (
-            "https://indiankanoon.org/search/?formInput="
-            + f"{doc['act_short']} section {doc['section']}".replace(" ", "+")
-        ),
+        # The exact cited provision, never a search-results page: a known
+        # Kanoon /doc/ id, the act's own per-section page, or the backend's
+        # /sources/statute/ redirect that resolves the id on first click.
+        # See source_links.py.
+        "url": source_links.direct_url(doc),
     }
 
 
