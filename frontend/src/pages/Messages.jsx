@@ -60,6 +60,15 @@ function formatBytes(n) {
   return `${(n / (1024 * 1024)).toFixed(1)} MB`;
 }
 
+// Used only for the "Opening <filename>..." placeholder written into the
+// blank tab below - filenames come from the other side of a chat, so they
+// go through this before landing in document.write().
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, (c) => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
+  }[c]));
+}
+
 const ClipIcon = (
   <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.6"
        strokeLinecap="round" strokeLinejoin="round">
@@ -82,17 +91,68 @@ const FileIcon = (
 function AttachmentCard({ attachment, token }) {
   const [opening, setOpening] = useState(false);
   const [error, setError] = useState('');
+  // A ref, not just the `opening` state, guards against a second open() in
+  // the same tick (double-click/double-tap). setState is asynchronous, so
+  // a same-tick second call would still read the old `opening` value and
+  // slip through, each firing its own window.open - which is exactly what
+  // produced the stray blank tab. The ref flips synchronously, so the
+  // second call sees it immediately and bails before touching the window.
+  const openingRef = useRef(false);
 
   async function open() {
-    if (opening) return;
+    if (openingRef.current) return;
+    openingRef.current = true;
     setOpening(true);
     setError('');
+    // The tab has to be opened synchronously, in the same tick as the click,
+    // or browsers (mobile ones especially) treat it as an unsolicited popup
+    // and silently swallow it - which is exactly what was happening here:
+    // the signed URL only exists after an await, so by the time window.open
+    // ran the click was no longer "trusted". Opening a blank tab right away
+    // and redirecting it once the URL arrives keeps it inside the click.
+    // No 'noopener' on THIS call: noopener deliberately withholds the window
+    // reference, and without a reference there is nothing to redirect once
+    // the URL is back - that's what left the tab stuck on about:blank. We
+    // don't need noopener's isolation here anyway; we're the ones choosing
+    // what the tab navigates to, not handing off to arbitrary page content.
+    const tab = window.open('', '_blank');
+    // A bare about:blank for 2-3s while the signed URL round-trips reads as
+    // a broken/frozen tab. Writing a small placeholder in immediately - filename
+    // included, so it's clear which file this is - makes the wait legible
+    // instead of looking like nothing happened.
+    if (tab && !tab.closed) {
+      try {
+        tab.document.title = attachment.filename;
+        tab.document.write(
+          `<!doctype html><html><head><meta charset="utf-8"><title>${escapeHtml(
+            attachment.filename
+          )}</title><style>html,body{height:100%;margin:0;display:flex;` +
+            `align-items:center;justify-content:center;background:#111;` +
+            `color:#aaa;font:14px system-ui,sans-serif}</style></head>` +
+            `<body>Opening ${escapeHtml(attachment.filename)}&hellip;</body></html>`
+        );
+        tab.document.close();
+      } catch {
+        // Writing into the tab is a nicety, not a requirement - if it fails
+        // for any reason the tab just stays blank until it navigates.
+      }
+    }
     try {
       const { url } = await fetchDocumentUrl(token, attachment.id);
-      window.open(url, '_blank', 'noopener');
+      if (!url) throw new Error("Couldn't get a link to that file.");
+      if (tab && !tab.closed) {
+        tab.location.href = url;
+      } else {
+        // Either window.open was blocked outright, or the tab was closed in
+        // the meantime - last resort, which will itself likely be blocked
+        // since it's no longer inside the click's user-activation window.
+        window.open(url, '_blank', 'noopener');
+      }
     } catch (err) {
+      if (tab && !tab.closed) tab.close();
       setError(err.message || "Couldn't open that file.");
     } finally {
+      openingRef.current = false;
       setOpening(false);
     }
   }
