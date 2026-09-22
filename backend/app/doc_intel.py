@@ -41,7 +41,7 @@ from typing import Any, Dict, List, Optional
 
 import httpx
 
-from . import drafting, gemini, storage
+from . import doc_extract, drafting, gemini, storage
 
 logger = logging.getLogger(__name__)
 
@@ -58,7 +58,6 @@ MAX_QUESTIONS = 10
 
 _CACHE_MAX = 48
 
-_text_cache: "OrderedDict[str, str]" = OrderedDict()
 _analysis_cache: "OrderedDict[int, Dict[str, Any]]" = OrderedDict()
 _questions_cache: "OrderedDict[str, Dict[str, Any]]" = OrderedDict()
 
@@ -113,29 +112,14 @@ async def close_client() -> None:
 
 
 async def load_text(storage_path: str, content_type: str, filename: str) -> str:
-    """Download a stored document and extract its text.
+    """Normalised text of a stored document - PDF, Word, photo, scan or
+    handwriting. Delegates to doc_extract, the one extraction pipeline, so
+    thread documents are read exactly like documents asked about in Ask.
 
-    Raises ValueError for a file whose text cannot be read - a scan, a photo
-    of a notice - which the API turns into a 400 with the extractor's own
-    message, since "this needs OCR" is the useful thing to say.
+    Raises ValueError with a user-facing message for a file that cannot be
+    read (including one too unclear to transcribe without guessing).
     """
-    cached = _cache_get(_text_cache, storage_path)
-    if cached is not None:
-        return cached
-
-    url = await storage.signed_url(storage_path, expires_in=120)
-    blob = await _get_blob_client().get(url)
-    blob.raise_for_status()
-    text = drafting.extract_text(blob.content, content_type, filename)
-
-    if not (text or "").strip():
-        raise ValueError(
-            "No readable text could be extracted from this file. If it is a "
-            "scan or a photo, it needs OCR before it can be analysed."
-        )
-
-    _cache_put(_text_cache, storage_path, text)
-    return text
+    return await doc_extract.load(storage_path, content_type, filename)
 
 
 def chat_context(messages: List[Dict[str, str]]) -> str:

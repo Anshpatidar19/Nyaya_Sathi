@@ -37,8 +37,20 @@ from . import gemini
 
 logger = logging.getLogger(__name__)
 
-# Below this, there isn't enough text to classify or to answer from.
-MIN_CHARS = 200
+# Below this, there isn't enough text to classify or to answer from. Measured
+# on the document's own words, without the OCR transcription note. Kept low
+# enough for a short handwritten complaint or application, which can be a
+# few lines long and entirely legitimate.
+MIN_CHARS = 120
+
+# doc_extract prepends "[Transcription note: ...]" to OCR'd text so the
+# analysis prompts know parts may be illegible. The gate must judge the
+# document, not the note: the note is ~250 characters about OCR, which pads
+# a near-empty scan past MIN_CHARS and hands the classifier meta-text in
+# place of the document's real opening.
+# The note contains "[illegible]" itself, so it ends at the "]" followed by
+# the blank line doc_extract always puts after it, not at the first "]".
+_OCR_NOTE = re.compile(r"^\s*\[Transcription note:.*?\]\n\n", re.S)
 
 # How much of the document the classifier looks at. The first couple of
 # thousand characters carry the title, parties and subject matter - that's
@@ -65,6 +77,20 @@ _LEGAL_TERMS = re.compile(
     r"stamp duty|registrar|notary|witness|executed|undersigned"
     r")\b",
     re.IGNORECASE,
+)
+
+# The same idea for Hindi, which is how many handwritten complaints,
+# applications and notices arrive. \b cannot be used here: Devanagari vowel
+# signs are not word characters to Python's re, so a boundary test fails in
+# the middle of ordinary words. Without this, every Hindi document scored
+# zero legal terms and paid for a Gemini classifier call on the critical path.
+_LEGAL_TERMS_HI = re.compile(
+    r"(धारा|अधिनियम|न्यायालय|अदालत|न्यायाधीश|मजिस्ट्रेट|थाना|पुलिस|प्रथम सूचना|"
+    r"एफ\.?आई\.?आर|शिकायत|प्रार्थना ?पत्र|प्रार्थी|आवेदन|याचिका|प्रतिवादी|वादी|"
+    r"अभियुक्त|जमानत|वकील|अधिवक्ता|नोटिस|अनुबंध|समझौता|करार|"
+    r"किरायेदार|मकान मालिक|किरायानामा|विक्रय पत्र|रजिस्ट्री|वसीयत|मुख्तारनामा|"
+    r"शपथ ?पत्र|हलफनामा|आदेश|निर्णय|जुर्माना|मुआवजा|क्षतिपूर्ति|गवाह|साक्षी|"
+    r"हस्ताक्षर|संपत्ति|खसरा|तहसील|पटवारी)"
 )
 
 # Strong markers of subjects this platform has no business explaining.
@@ -94,8 +120,10 @@ class Verdict:
 def _keyword_score(text: str) -> tuple[int, int]:
     """Returns (legal hits, out-of-scope hits) on the sample we classify."""
     sample = text[:CLASSIFY_CHARS]
+    legal = set(m.group(0).lower() for m in _LEGAL_TERMS.finditer(sample))
+    legal |= set(m.group(0) for m in _LEGAL_TERMS_HI.finditer(sample))
     return (
-        len(set(m.group(0).lower() for m in _LEGAL_TERMS.finditer(sample))),
+        len(legal),
         len(set(m.group(0).lower() for m in _OUT_OF_SCOPE_TERMS.finditer(sample))),
     )
 
@@ -111,13 +139,13 @@ REJECTION = (
 
 async def check(text: str, filename: str = "") -> Verdict:
     """Decide whether this document is something the platform should read."""
-    stripped = (text or "").strip()
+    stripped = _OCR_NOTE.sub("", text or "").strip()
 
     if len(stripped) < MIN_CHARS:
         return Verdict(
             False,
-            "There wasn't enough readable text in that file. If it's a scanned "
-            "image, it would need OCR first — try a text PDF or a Word file.",
+            "There wasn't enough readable text in that file to analyse. If it's "
+            "a photo or scan, try a sharper one with the whole page in frame.",
             "unreadable",
         )
 

@@ -36,6 +36,13 @@ logger = logging.getLogger(__name__)
 
 TIMEOUT = 60.0
 
+# Uploads get their own, longer budget. A phone photo of a document is
+# several MB, and Supabase Storage can take over a minute to answer on a slow
+# connection or a cold free-tier project. A read timeout used to escape as an
+# unhandled httpx exception - a raw 500 - instead of the endpoint's friendly
+# "could not store that file, please try again".
+UPLOAD_TIMEOUT = httpx.Timeout(connect=15.0, write=120.0, read=120.0, pool=15.0)
+
 # Types we accept. Everything else is rejected - this is a legal-documents
 # feature, not general file hosting, and it keeps executables out.
 ALLOWED_TYPES = {
@@ -43,6 +50,10 @@ ALLOWED_TYPES = {
     "image/jpeg": ".jpg",
     "image/png": ".png",
     "image/webp": ".webp",
+    # Phone photos: iPhones save HEIC by default, and a photographed
+    # handwritten application is exactly the case OCR is for.
+    "image/heic": ".heic",
+    "image/heif": ".heif",
     "application/msword": ".doc",
     "application/vnd.openxmlformats-officedocument.wordprocessingml.document": ".docx",
     "text/plain": ".txt",
@@ -109,10 +120,29 @@ async def upload(
         "Content-Type": content_type or "application/octet-stream",
         "x-upsert": "false",
     }
-    async with httpx.AsyncClient(timeout=TIMEOUT) as client:
-        resp = await client.post(url, headers=headers, content=data)
-    if resp.status_code >= 400:
-        raise StorageError(f"Upload failed ({resp.status_code}): {resp.text[:300]}")
+    async with httpx.AsyncClient(timeout=UPLOAD_TIMEOUT) as client:
+        for attempt in (1, 2):
+            try:
+                resp = await client.post(url, headers=headers, content=data)
+            except httpx.TimeoutException as exc:
+                if attempt == 2:
+                    raise StorageError(f"Upload timed out: {exc!r}")
+                logger.warning("Storage upload timed out for %s; retrying once", path)
+                continue
+            except httpx.HTTPError as exc:
+                raise StorageError(f"Upload failed: {exc!r}")
+
+            # A timeout doesn't mean the first attempt failed - Supabase may
+            # have stored the file and only the reply was slow. With x-upsert
+            # false the retry then reports a duplicate, which here means
+            # success: the path is unique to this one upload.
+            if attempt == 2 and resp.status_code in (400, 409) and (
+                "exist" in resp.text.lower() or "duplicate" in resp.text.lower()
+            ):
+                return path
+            if resp.status_code >= 400:
+                raise StorageError(f"Upload failed ({resp.status_code}): {resp.text[:300]}")
+            return path
     return path
 
 

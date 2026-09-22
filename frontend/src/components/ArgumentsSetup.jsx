@@ -93,7 +93,7 @@ export default function ArgumentsSetup({
                 >
                   {uploading ? <span className="spinner spinner-dark" /> : 'Browse file'}
                 </button>
-                <span className="arg-drop-hint">PDF, Word or text · up to 10 MB</span>
+                <span className="arg-drop-hint">PDF, Word, photo or handwritten · up to 10 MB</span>
               </>
             )}
           </div>

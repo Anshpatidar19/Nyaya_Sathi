@@ -50,7 +50,7 @@ const MAX_CHARS = 5000;
 // Mirrors storage.ALLOWED_TYPES / MAX_BYTES on the backend - this only
 // filters the OS picker and gives an early error, the server still enforces
 // both for real.
-const ACCEPT = '.pdf,.doc,.docx,.txt,.jpg,.jpeg,.png,.webp';
+const ACCEPT = '.pdf,.doc,.docx,.txt,.jpg,.jpeg,.png,.webp,.heic,.heif';
 const MAX_UPLOAD_BYTES = 10 * 1024 * 1024;
 
 function formatBytes(n) {
