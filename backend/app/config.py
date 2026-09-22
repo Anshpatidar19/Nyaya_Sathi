@@ -14,6 +14,11 @@ class Settings(BaseSettings):
 
     gemini_api_key: str = os.getenv("GEMINI_API_KEY", "")
     gemini_model: str = os.getenv("GEMINI_MODEL", "gemini-3.1-flash-lite")
+    # Model used to READ scanned pages, photos and handwriting (OCR). Empty
+    # means "same as GEMINI_MODEL". Set it to a non-lite Flash model if
+    # handwriting accuracy matters more than cost - only uploads that
+    # actually need OCR use it; text PDFs and Word files never call it.
+    gemini_ocr_model: str = os.getenv("GEMINI_OCR_MODEL", "")
 
     # Supabase Postgres. Session pooler URI from
     # Project Settings -> Database -> Connection string -> URI

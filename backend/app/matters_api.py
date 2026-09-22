@@ -16,7 +16,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import func, literal
 from sqlalchemy.orm import Session
 
-from . import models, schemas, storage
+from . import doc_extract, models, schemas, storage
 from .auth import require_advocate
 from .database import get_db
 
@@ -539,6 +539,7 @@ async def delete_matter_document(
         raise HTTPException(status_code=404, detail="Document not found.")
 
     await storage.delete(doc.storage_path)
+    await doc_extract.forget(doc.storage_path)
     db.delete(doc)
     _touch(db, matter)
     db.commit()

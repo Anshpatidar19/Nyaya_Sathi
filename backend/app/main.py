@@ -24,6 +24,7 @@ from sqlalchemy.orm import Session, joinedload
 from . import (
     arguments,
     doc_intel,
+    doc_extract,
     doc_scope,
     drafting,
     gemini,
@@ -129,7 +130,7 @@ def _get_blob_client() -> httpx.AsyncClient:
 # whole Gemini call for the scope classifier - all of it repeated, in full,
 # on every follow-up question about the same file.
 _DOC_CACHE_MAX = 32
-_doc_text_cache: "OrderedDict[str, str]" = OrderedDict()
+# Extracted text is cached in doc_extract, shared with document intelligence.
 _doc_scope_ok: "OrderedDict[str, bool]" = OrderedDict()
 
 
@@ -153,6 +154,7 @@ async def shutdown_clients():
     await gemini.close_client()
     await kanoon.close_client()
     await doc_intel.close_client()
+    await doc_extract.close_client()
     global _blob_client
     if _blob_client is not None and not _blob_client.is_closed:
         await _blob_client.aclose()
@@ -365,27 +367,19 @@ async def _load_document(
     if not doc:
         raise HTTPException(status_code=404, detail="Document not found.")
 
-    # Same file, same bytes, same extracted text. Asking a second question
-    # about an uploaded notice re-downloaded it and re-ran PDF extraction for
-    # a result that could not have changed.
-    cached = _cache_get(_doc_text_cache, doc.storage_path)
-    if cached is not None:
-        return doc, cached
-
+    # One extraction pipeline for every format - text PDFs, Word, photos,
+    # scans and handwriting (Gemini OCR). It caches in memory and saves the
+    # result beside the file, and upload already started it in the
+    # background, so a question rarely waits on extraction at all.
     try:
-        url = await storage.signed_url(doc.storage_path, expires_in=120)
-        blob = await _get_blob_client().get(url)
-        blob.raise_for_status()
-        text = drafting.extract_text(blob.content, doc.content_type, doc.filename)
+        text = await doc_extract.load(doc.storage_path, doc.content_type, doc.filename)
     except ValueError as exc:
+        # Includes doc_extract.Unreadable: too unclear to read honestly.
         raise HTTPException(status_code=400, detail=str(exc))
-    except HTTPException:
-        raise
     except Exception as exc:
         logger.exception("Could not read stored document %s: %s", doc.id, exc)
         raise HTTPException(status_code=503, detail="Could not read that document.")
 
-    _cache_put(_doc_text_cache, doc.storage_path, text)
     return doc, text
 
 
@@ -980,8 +974,8 @@ async def upload_document(
         raise HTTPException(
             status_code=400,
             detail=(
-                "That file type isn't supported. Upload a PDF, image, Word "
-                "document, or plain text file."
+                "That file type isn't supported. Upload a PDF, Word document, "
+                "photo (JPG, PNG, WEBP, HEIC) or plain text file."
             ),
         )
 
@@ -992,6 +986,17 @@ async def upload_document(
         raise HTTPException(
             status_code=413,
             detail=f"Files must be under {storage.MAX_BYTES // (1024 * 1024)} MB.",
+        )
+
+    # The Content-Type header is the browser's claim; the first bytes are
+    # evidence. A renamed executable labelled application/pdf stops here.
+    if doc_extract.detect_kind(data, file.content_type, file.filename or "") is None:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "That file doesn't look like the type it claims to be. Upload "
+                "a PDF, Word document, photo or text file."
+            ),
         )
 
     path = storage.build_path(current_user.id, file.filename)
@@ -1026,6 +1031,11 @@ async def upload_document(
     db.add(doc)
     db.commit()
     db.refresh(doc)
+
+    # Read it now, while the user is still typing their question - text
+    # extraction for PDFs and Word, Gemini OCR for photos, scans and
+    # handwriting. Runs in the background; this response does not wait.
+    doc_extract.prewarm(path, data, file.content_type, doc.filename)
     return doc
 
 
@@ -1103,6 +1113,7 @@ async def delete_document(
         raise HTTPException(status_code=404, detail="Document not found.")
 
     await storage.delete(doc.storage_path)
+    await doc_extract.forget(doc.storage_path)
     db.delete(doc)
     db.commit()
 

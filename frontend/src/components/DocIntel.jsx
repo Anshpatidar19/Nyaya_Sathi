@@ -102,18 +102,14 @@ const I = {
   ),
 };
 
-/* Only these can have text pulled out of them server-side. Offering the AI
-   options on a photo of a notice and then failing with "needs OCR" is a
-   worse experience than saying so before the click. */
-const READABLE = /^(application\/pdf|text\/plain|application\/msword|application\/vnd\.openxmlformats-officedocument\.wordprocessingml\.document)$/;
+/* Everything the backend can read. Photos, scans and handwriting are read
+   by Gemini OCR server-side, so images are analysable like any PDF. */
+const READABLE = /^(application\/pdf|text\/plain|application\/msword|application\/vnd\.openxmlformats-officedocument\.wordprocessingml\.document|image\/(jpeg|png|webp|heic|heif))$/;
 
 function readableReason(attachment) {
   const type = attachment?.content_type || '';
   if (READABLE.test(type)) return null;
-  if (type.startsWith('image/')) {
-    return 'Images need OCR before they can be analysed.';
-  }
-  return 'Only PDF, Word and text files can be analysed.';
+  return 'Only PDF, Word, photo and text files can be analysed.';
 }
 
 const TABS = [

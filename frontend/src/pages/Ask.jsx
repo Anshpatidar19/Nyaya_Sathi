@@ -85,10 +85,10 @@ const Icon = {
 // Mirrors storage.ALLOWED_TYPES on the backend. Listing them here only
 // filters the OS picker - the server still rejects anything else.
 const ACCEPT =
-  '.pdf,.doc,.docx,.txt,.jpg,.jpeg,.png,.webp,' +
+  '.pdf,.doc,.docx,.txt,.jpg,.jpeg,.png,.webp,.heic,.heif,' +
   'application/pdf,application/msword,text/plain,' +
   'application/vnd.openxmlformats-officedocument.wordprocessingml.document,' +
-  'image/jpeg,image/png,image/webp';
+  'image/jpeg,image/png,image/webp,image/heic,image/heif';
 
 const MAX_UPLOAD_BYTES = 10 * 1024 * 1024;
 
@@ -693,7 +693,9 @@ export default function Ask() {
       className="attach-btn"
       onClick={() => fileInputRef.current?.click()}
       disabled={uploading || loading}
-      title={mode === 'review' ? 'Upload a document to review' : 'Attach a document'}
+      title={mode === 'review'
+        ? 'Upload a document to review — PDF, Word, photo or handwritten'
+        : 'Attach a document — PDF, Word, photo or handwritten'}
       aria-label="Attach a document"
     >
       {uploading ? <span className="spinner spinner-dark" /> : Icon.clip}

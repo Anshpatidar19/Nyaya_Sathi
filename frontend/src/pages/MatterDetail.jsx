@@ -654,7 +654,7 @@ function Documents({ matter, token, onChange }) {
         <input
           type="file"
           style={{ display: 'none' }}
-          accept=".pdf,.doc,.docx,.txt,.jpg,.jpeg,.png,.webp"
+          accept=".pdf,.doc,.docx,.txt,.jpg,.jpeg,.png,.webp,.heic,.heif"
           onChange={(e) => { upload(e.target.files?.[0]); e.target.value = ''; }}
         />
         <span className="dropzone-ic">
@@ -663,7 +663,7 @@ function Documents({ matter, token, onChange }) {
         <span className="dropzone-text">
           {uploading ? 'Uploading…' : 'Drop a file here, or click to browse'}
         </span>
-        <span className="dropzone-hint">PDF, Word, text or image · up to 10 MB</span>
+        <span className="dropzone-hint">PDF, Word, photo or handwritten · up to 10 MB</span>
       </label>
 
       {matter.documents.length === 0 ? (

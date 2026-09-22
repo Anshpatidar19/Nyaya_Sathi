@@ -19,6 +19,7 @@ module has to handle explicitly:
    parsing fails and repairs a cleanly truncated object where it can.
 """
 
+import base64
 import json
 import logging
 import re
@@ -102,18 +103,45 @@ def _extract_text(candidate: Dict[str, Any], strip: bool = True) -> str:
     return joined.strip() if strip else joined
 
 
+def _parts(prompt: str, media: Optional[List[Tuple[str, bytes]]] = None) -> List[Dict[str, Any]]:
+    """Request parts: inline files first, then the instruction text.
+
+    Files go before the text on purpose - Gemini's guidance for document
+    and image input is that the question should follow the material.
+    """
+    parts: List[Dict[str, Any]] = []
+    for mime, blob in media or []:
+        parts.append({
+            "inline_data": {
+                "mime_type": mime,
+                "data": base64.b64encode(blob).decode("ascii"),
+            }
+        })
+    parts.append({"text": prompt})
+    return parts
+
+
 async def _generate_raw(
     prompt: str,
     system_instruction: str,
     temperature: float = 0.2,
     max_output_tokens: int = 2048,
     thinking_budget: Optional[int] = DEFAULT_THINKING_BUDGET,
+    media: Optional[List[Tuple[str, bytes]]] = None,
+    model: Optional[str] = None,
 ) -> Tuple[str, str]:
-    """Call the model. Returns (text, finish_reason)."""
+    """Call the model. Returns (text, finish_reason).
+
+    `media` is a list of (mime_type, bytes) sent inline before the prompt -
+    images and PDFs, for OCR. `model` overrides settings.gemini_model for
+    this one call (document reading can use a stronger vision model than
+    the text pipeline without touching anything else).
+    """
     if not settings.gemini_api_key:
         raise GeminiError("GEMINI_API_KEY is not set. Add it to backend/.env.")
 
-    url = f"{GEMINI_BASE}/models/{settings.gemini_model}:generateContent"
+    model_name = model or settings.gemini_model
+    url = f"{GEMINI_BASE}/models/{model_name}:generateContent"
 
     generation_config: Dict[str, Any] = {
         "temperature": temperature,
@@ -125,7 +153,7 @@ async def _generate_raw(
 
     payload: Dict[str, Any] = {
         "systemInstruction": {"parts": [{"text": system_instruction}]},
-        "contents": [{"role": "user", "parts": [{"text": prompt}]}],
+        "contents": [{"role": "user", "parts": _parts(prompt, media)}],
         "generationConfig": generation_config,
     }
 
@@ -144,7 +172,7 @@ async def _generate_raw(
         if "thinking" in resp.text.lower():
             logger.warning(
                 "Model %s rejected thinkingConfig; retrying without it.",
-                settings.gemini_model,
+                model_name,
             )
             generation_config.pop("thinkingConfig")
             resp = await client.post(
@@ -316,6 +344,8 @@ async def generate_json(
     max_output_tokens: int = 2048,
     thinking_budget: Optional[int] = DEFAULT_THINKING_BUDGET,
     retry_on_truncation: bool = True,
+    media: Optional[List[Tuple[str, bytes]]] = None,
+    model: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Call the model and parse JSON, with the finish reason in scope.
 
@@ -329,6 +359,8 @@ async def generate_json(
         temperature=temperature,
         max_output_tokens=max_output_tokens,
         thinking_budget=thinking_budget,
+        media=media,
+        model=model,
     )
 
     try:
@@ -350,6 +382,8 @@ async def generate_json(
             temperature=temperature,
             max_output_tokens=bigger,
             thinking_budget=0,          # every token to the answer this time
+            media=media,
+            model=model,
         )
         return _parse_json(text, finish_reason)
 
