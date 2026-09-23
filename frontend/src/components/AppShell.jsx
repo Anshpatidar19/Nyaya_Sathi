@@ -474,7 +474,11 @@ export function AppSidebarUser() {
    body. Wrapping it once means a change to the frame doesn't have to be
    repeated across five pages. */
 
-export function NetworkPage({ active, children }) {
+/* `fill` keeps the shell bounded to the viewport at every width, for pages
+   whose content is a fixed column with its own scroll region (an open
+   conversation). Without it, below 900px the shell falls back to ordinary
+   page scroll - which suits list and profile pages. See .ask-app-fill. */
+export function NetworkPage({ active, fill = false, children }) {
   const [sidebarOpen, setSidebarOpen] = useState(
     () => localStorage.getItem('ns_sidebar') !== 'closed'
   );
@@ -484,7 +488,7 @@ export function NetworkPage({ active, children }) {
   }, [sidebarOpen]);
 
   return (
-    <div className="ask-app">
+    <div className={`ask-app ${fill ? 'ask-app-fill' : ''}`}>
       <AppTopbar
         sidebarOpen={sidebarOpen}
         onToggleSidebar={() => setSidebarOpen((o) => !o)}

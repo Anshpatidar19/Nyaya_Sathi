@@ -9,7 +9,17 @@ caches and failure modes.
     POST /network/threads/{thread_id}/documents/{document_id}/questions
     POST /network/threads/{thread_id}/documents/{document_id}/ask
 
-Authorisation, in one place (_chat_document below) and never trusted from
+and one route for the advocate's OWN uploads, used by the Ask page:
+
+    POST /documents/{document_id}/analyze
+
+That last route runs the exact same extraction (doc_intel.analysis_for)
+and returns the exact same AnalysisOut, so Ask and the chat render one
+result shape with one component. It differs only in who may call it: the
+document must belong to the caller (see _own_document), and there is no
+thread, so no conversation context is passed in.
+
+Authorisation for the thread routes, in one place (_chat_document below) and never trusted from
 the client:
 
   * the caller must be a participant in the thread
@@ -36,13 +46,18 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
-from . import doc_intel, gemini, models, storage
+from . import doc_intel, doc_scope, gemini, models, storage
 from .auth import require_advocate
 from .database import get_db
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/network/threads", tags=["document-intelligence"])
+# No router-level prefix: the thread routes live under /network/threads and
+# the own-document route under /documents, and keeping both on one router
+# means main.py's single include_router(doc_intel_router) mounts them all.
+router = APIRouter(tags=["document-intelligence"])
+
+THREAD_PREFIX = "/network/threads"
 
 # Messages read back for context. Enough to cover the conversation that led
 # to the document being sent without turning every analyse click into a
@@ -183,6 +198,27 @@ def _chat_document(
     return doc
 
 
+def _own_document(
+    db: Session, document_id: int, user: models.User
+) -> models.Document:
+    """One of the caller's own uploads - the Ask page's attach button.
+
+    Ownership is part of the query, and a miss is a 404, for the same reason
+    as _chat_document: a 403 would confirm the id exists.
+    """
+    doc = (
+        db.query(models.Document)
+        .filter(
+            models.Document.id == document_id,
+            models.Document.user_id == user.id,
+        )
+        .first()
+    )
+    if not doc:
+        raise HTTPException(status_code=404, detail="Document not found.")
+    return doc
+
+
 def _thread_context(db: Session, thread_id: int, advocate_id: int) -> str:
     """Recent conversation, as the question engine sees it.
 
@@ -250,7 +286,7 @@ def _ai_failure(what: str, exc: Exception) -> HTTPException:
 # ---------------------------------------------------------------------------
 
 @router.post(
-    "/{thread_id}/documents/{document_id}/analyze",
+    THREAD_PREFIX + "/{thread_id}/documents/{document_id}/analyze",
     response_model=AnalysisOut,
 )
 async def analyze_document(
@@ -286,7 +322,7 @@ async def analyze_document(
 # ---------------------------------------------------------------------------
 
 @router.post(
-    "/{thread_id}/documents/{document_id}/questions",
+    THREAD_PREFIX + "/{thread_id}/documents/{document_id}/questions",
     response_model=QuestionsOut,
 )
 async def suggest_questions(
@@ -328,7 +364,7 @@ async def suggest_questions(
 # ---------------------------------------------------------------------------
 
 @router.post(
-    "/{thread_id}/documents/{document_id}/ask",
+    THREAD_PREFIX + "/{thread_id}/documents/{document_id}/ask",
     response_model=AskOut,
 )
 async def ask_about_document(
@@ -362,3 +398,50 @@ async def ask_about_document(
         raise _ai_failure("answer that question", exc)
 
     return AskOut(**result)
+
+
+# ---------------------------------------------------------------------------
+# 4. Analyze one of the advocate's own uploads (Ask page)
+# ---------------------------------------------------------------------------
+
+@router.post(
+    "/documents/{document_id}/analyze",
+    response_model=AnalysisOut,
+)
+async def analyze_own_document(
+    document_id: int,
+    force: bool = Query(
+        default=False, description="Re-run even if an extraction is cached."
+    ),
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(require_advocate),
+):
+    """The chat's document analysis, for a file the advocate uploaded in Ask.
+
+    Same extraction, same cache, same response model as analyze_document
+    above - only the authorisation differs, and there is no chat to read
+    context from.
+
+    The scope gate is kept because this is an Ask upload: Ask has always
+    refused non-legal files with a 422, and the page renders that as a
+    refusal in the thread. Dropping it here would make an advocate's upload
+    the one path in Ask that analyses a recipe or a payslip.
+    """
+    doc = _own_document(db, document_id, current_user)
+    text = await _text_of(doc)
+
+    verdict = await doc_scope.check(text, doc.filename)
+    if not verdict.in_scope:
+        raise HTTPException(status_code=422, detail=verdict.reason)
+
+    if force:
+        doc_intel.forget(doc.id)
+
+    try:
+        analysis, cached = await doc_intel.analysis_for(
+            doc.id, text, doc.filename, "", force=force
+        )
+    except Exception as exc:
+        raise _ai_failure("analyse that document", exc)
+
+    return AnalysisOut(document=_ref(doc), cached=cached, **analysis)

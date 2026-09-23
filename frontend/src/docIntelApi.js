@@ -6,8 +6,9 @@
    the extraction actually lives (see doc_intel.py) - a second cache in
    front of it would only make "re-run this" harder to reason about.
 
-   Every route is scoped to a thread AND a document, so a document id on
-   its own opens nothing. */
+   Every chat route is scoped to a thread AND a document, so a document id
+   on its own opens nothing. The one exception, analyzeOwnDocument, only
+   opens documents the caller uploaded themselves. */
 
 const BASE_URL = import.meta.env.VITE_API_URL || 'http://127.0.0.1:8000';
 
@@ -29,6 +30,10 @@ async function handle(res) {
       typeof detail === 'string' ? detail : 'That request was not accepted.'
     );
     err.status = res.status;
+    // Same meaning as in api.js: a 422 is a refusal (out-of-scope file),
+    // not a blip, so the Ask page shows it in the thread instead of
+    // offering a retry that can only be refused again. The chat ignores it.
+    err.terminal = res.status === 422;
     throw err;
   }
   return res.json();
@@ -50,6 +55,19 @@ export async function analyzeDocument(token, threadId, documentId, { force } = {
     docUrl(threadId, documentId, 'analyze', force ? { force: 'true' } : null),
     { method: 'POST', headers: authJson(token) }
   );
+  return handle(res);
+}
+
+/* The same extraction, for one of the advocate's OWN uploads (the Ask
+   page's attach button). Same response shape as analyzeDocument, so both
+   surfaces render it with the same component; only the route - and so the
+   ownership check - differs. */
+export async function analyzeOwnDocument(token, documentId, { force } = {}) {
+  const qs = force ? '?force=true' : '';
+  const res = await fetch(`${BASE_URL}/documents/${documentId}/analyze${qs}`, {
+    method: 'POST',
+    headers: authJson(token),
+  });
   return handle(res);
 }
 
