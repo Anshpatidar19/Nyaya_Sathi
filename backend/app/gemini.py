@@ -17,16 +17,35 @@ module has to handle explicitly:
    budget can still truncate the actual answer, so every caller that wants
    JSON should go through generate_json(), which reports finishReason when
    parsing fails and repairs a cleanly truncated object where it can.
+
+Fallback: if Gemini answers 503 / UNAVAILABLE ("high demand"), the call is
+retried once after a short backoff. If the retry is also a 503, the same
+prompt - retrieved sources included - is sent to Groq (groq_client.py). Every
+other error is raised unchanged - except a quota error (429), which skips
+the retry, goes straight to Groq, and puts Gemini on a short cooldown so the
+calls that follow don't each spend a round trip rediscovering the limit.
+The switch happens inside _generate_raw and
+_stream_raw, so every caller (synthesis, validation, drafting, review,
+arguments, translation) gets it without knowing it exists, and the output
+goes through the same parsing and shaping whichever model wrote it.
+
+The API key is sent as the x-goog-api-key header, not a ?key= query
+parameter: httpx logs every request URL at INFO, which put the key in the
+server log on every call.
 """
 
+import asyncio
 import base64
 import json
 import logging
+import random
 import re
+import time
 from typing import Any, AsyncIterator, Dict, List, Optional, Tuple
 
 import httpx
 
+from . import groq_client
 from .config import settings
 
 logger = logging.getLogger(__name__)
@@ -46,11 +65,243 @@ DEFAULT_THINKING_BUDGET = 0
 
 
 class GeminiError(RuntimeError):
-    pass
+    """status_code is set only when the error came from an API response.
+    retry_after is the wait Gemini asked for, when it said (429s do)."""
+
+    def __init__(
+        self,
+        message: str = "",
+        status_code: Optional[int] = None,
+        retry_after: Optional[float] = None,
+        per_day: bool = False,
+    ):
+        super().__init__(message)
+        self.status_code = status_code
+        self.retry_after = retry_after
+        self.per_day = per_day
 
 
 class GeminiTruncated(GeminiError):
     """The model hit the output cap before finishing. Retry with more room."""
+
+
+class GeminiUnavailable(GeminiError):
+    """Transient 503 / UNAVAILABLE - the model is overloaded right now.
+
+    A subclass of GeminiError on purpose: every existing `except GeminiError`
+    in the app still catches it, so if the fallback is off or fails, callers
+    behave exactly as they did before this existed.
+    """
+
+
+class GeminiQuotaExceeded(GeminiError):
+    """429 / RESOURCE_EXHAUSTED - our quota is spent, per minute or per day.
+
+    Also a GeminiError subclass, for the same reason as GeminiUnavailable.
+    """
+
+
+# --------------------------------------------------------------------------
+# Error classification
+# --------------------------------------------------------------------------
+# Two conditions switch to Groq, and they are handled differently:
+#
+#   503  Google's side is busy. Transient - retry Gemini once, then Groq.
+#   429  OUR quota is spent. Retrying Gemini only spends another request
+#        against a limit already hit, so: no retry, straight to Groq, and
+#        skip Gemini for a cooldown.
+#
+# Everything else - 400, 401, 403, parse failures - is a bug or a config
+# problem another provider should not paper over. Raised unchanged.
+
+_UNAVAILABLE_MARKERS = (
+    "unavailable",            # gRPC status UNAVAILABLE, "temporarily unavailable"
+    "high demand",            # "This model is currently experiencing high demand"
+    "overloaded",             # "The model is overloaded. Please try again later."
+)
+
+
+def _is_unavailable(status: Optional[int], text: str) -> bool:
+    """The 503 rule, shared by the raise site and the helper.
+
+    - No status  -> False. The error did not come from the API (a JSON parse
+      failure, an empty response). Its message can quote the model's own
+      output, which may well contain the word "unavailable".
+    - 503        -> True.
+    - other 5xx  -> True only if the body says UNAVAILABLE / high demand /
+      overloaded.
+    - 4xx        -> False, whatever the body says.
+    """
+    if status is None:
+        return False
+    if status == 503:
+        return True
+    if 500 <= status < 600:
+        lowered = (text or "").lower()
+        return any(m in lowered for m in _UNAVAILABLE_MARKERS)
+    return False
+
+
+def is_gemini_503_error(error: BaseException) -> bool:
+    """True only for the transient "model is overloaded" condition."""
+    if isinstance(error, GeminiUnavailable):
+        return True
+    if isinstance(error, GeminiQuotaExceeded):
+        return False
+    if isinstance(error, GeminiError):
+        return _is_unavailable(error.status_code, str(error))
+    if isinstance(error, httpx.HTTPStatusError):
+        return _is_unavailable(error.response.status_code, error.response.text)
+    return False
+
+
+def is_gemini_quota_error(error: BaseException) -> bool:
+    """True for a 429 from the Gemini API - and nothing else.
+
+    Status code only, no text matching: a 429 is unambiguous, and the words
+    "quota" or "exhausted" can turn up in a legal answer.
+    """
+    if isinstance(error, GeminiQuotaExceeded):
+        return True
+    if isinstance(error, GeminiError):
+        return error.status_code == 429
+    if isinstance(error, httpx.HTTPStatusError):
+        return error.response.status_code == 429
+    return False
+
+
+_RETRY_IN_RE = re.compile(r"retry in\s+([\d.]+)\s*s", re.IGNORECASE)
+
+
+def _retry_hint(text: str) -> Tuple[Optional[float], bool]:
+    """(seconds Gemini asked us to wait, whether a per-day quota was hit).
+
+    Read from the full error body: RetryInfo.retryDelay ("37s") in the
+    structured details, else "Please retry in 37.2s." in the message. The
+    quota id names the window - GenerateRequestsPerDayPerProjectPerModel-...
+    means waiting a minute will not help.
+    """
+    per_day = "perday" in (text or "").lower()
+    delay: Optional[float] = None
+    try:
+        details = (json.loads(text).get("error") or {}).get("details") or []
+        for d in details:
+            raw = str(d.get("retryDelay") or "")
+            if raw.endswith("s"):
+                delay = float(raw[:-1])
+                break
+    except (ValueError, TypeError, AttributeError):
+        pass
+    if delay is None:
+        m = _RETRY_IN_RE.search(text or "")
+        if m:
+            try:
+                delay = float(m.group(1))
+            except ValueError:
+                pass
+    return delay, per_day
+
+
+def _api_error(status: int, detail: Any) -> GeminiError:
+    """Build the right exception for a failed API response."""
+    text = detail.decode("utf-8", "replace") if isinstance(detail, bytes) else str(detail)
+    message = f"Gemini API error {status}: {text[:400]}"
+    if status == 429:
+        delay, per_day = _retry_hint(text)      # full body, before truncation
+        return GeminiQuotaExceeded(message, status_code=status,
+                                   retry_after=delay, per_day=per_day)
+    cls = GeminiUnavailable if _is_unavailable(status, text) else GeminiError
+    return cls(message, status_code=status)
+
+
+# --------------------------------------------------------------------------
+# Quota cooldown
+# --------------------------------------------------------------------------
+# After a 429, text calls skip Gemini and go straight to Groq until the
+# cooldown ends. Without it, a spent daily quota would make every call try
+# Gemini first - and an answer is several calls (synthesis, validator,
+# sometimes a revision) - just to be told no each time.
+#
+# Process-wide and in-memory on purpose: a restart clears it, and Gemini is
+# simply tried again. When it expires the next call goes to Gemini first, so
+# Gemini returns as primary on its own the moment the quota is back.
+
+QUOTA_COOLDOWN_DEFAULT = 60.0      # when Gemini does not say how long
+QUOTA_COOLDOWN_MIN = 10.0
+
+_quota_cooldown_until = 0.0        # time.monotonic() deadline
+
+
+def _quota_cooldown_remaining() -> float:
+    return max(0.0, _quota_cooldown_until - time.monotonic())
+
+
+def _start_quota_cooldown(exc: GeminiError) -> float:
+    global _quota_cooldown_until
+    cap = max(settings.gemini_quota_cooldown_max, QUOTA_COOLDOWN_MIN)
+    if exc.per_day:
+        seconds = cap           # a daily limit will not reset in a minute
+    else:
+        seconds = min(max(exc.retry_after or QUOTA_COOLDOWN_DEFAULT,
+                          QUOTA_COOLDOWN_MIN), cap)
+    _quota_cooldown_until = time.monotonic() + seconds
+    return seconds
+
+
+def _clear_quota_cooldown() -> None:
+    """A Gemini call just succeeded, so the quota is evidently back."""
+    global _quota_cooldown_until
+    if _quota_cooldown_until:
+        logger.info("Gemini quota available again - cooldown cleared")
+    _quota_cooldown_until = 0.0
+
+
+# --------------------------------------------------------------------------
+# Fallback switches, backoff, dev simulation
+# --------------------------------------------------------------------------
+
+def _fallback_ready() -> bool:
+    """Master switch - covers both the 503 and the 429 fallback."""
+    return bool(settings.llm_fallback_enabled and settings.groq_api_key)
+
+
+def _quota_fallback_ready() -> bool:
+    return _fallback_ready() and bool(settings.llm_quota_fallback_enabled)
+
+
+def _backoff(attempt: int) -> float:
+    """Exponential backoff with jitter. Only attempt 0 is ever used today
+    (one retry), but the shape is right if the retry count is ever raised."""
+    base = max(settings.gemini_retry_base_delay, 0.0) * (2 ** attempt)
+    return base + random.uniform(0, base / 2)
+
+
+def _simulate_mode() -> str:
+    return (settings.gemini_simulate_503 or "").strip().lower()
+
+
+def _simulated_failure(attempt: int) -> Optional[GeminiError]:
+    """Dev-only switch (GEMINI_SIMULATE_503). See config.py.
+
+    Returns the fake error to raise, or None. Checked before any request is
+    sent, so a simulated failure costs no quota.
+    """
+    mode = _simulate_mode()
+    if mode == "quota":
+        logger.warning("SIMULATED Gemini 429 (GEMINI_SIMULATE_503=quota)")
+        return GeminiQuotaExceeded(
+            "Gemini API error 429: simulated - You exceeded your current quota.",
+            status_code=429, retry_after=30.0,
+        )
+    if mode in ("always", "midstream") or (mode == "once" and attempt == 0):
+        logger.warning("SIMULATED Gemini 503 (GEMINI_SIMULATE_503=%s, attempt=%d)",
+                       mode, attempt + 1)
+        return GeminiUnavailable(
+            "Gemini API error 503: simulated - This model is currently "
+            "experiencing high demand.",
+            status_code=503,
+        )
+    return None
 
 
 # --------------------------------------------------------------------------
@@ -74,11 +325,21 @@ def _get_client() -> httpx.AsyncClient:
 
 
 async def close_client() -> None:
-    """Called from the FastAPI shutdown hook."""
+    """Called from the FastAPI shutdown hook. Closes the Groq client too, so
+    main.py does not need to know the fallback exists."""
     global _client
     if _client is not None and not _client.is_closed:
         await _client.aclose()
     _client = None
+    await groq_client.close_client()
+
+
+def _auth_headers() -> Dict[str, str]:
+    # Header, not ?key= - see the module docstring.
+    return {
+        "Content-Type": "application/json",
+        "x-goog-api-key": settings.gemini_api_key,
+    }
 
 
 def _extract_text(candidate: Dict[str, Any], strip: bool = True) -> str:
@@ -121,7 +382,7 @@ def _parts(prompt: str, media: Optional[List[Tuple[str, bytes]]] = None) -> List
     return parts
 
 
-async def _generate_raw(
+async def _gemini_generate_raw(
     prompt: str,
     system_instruction: str,
     temperature: float = 0.2,
@@ -129,8 +390,9 @@ async def _generate_raw(
     thinking_budget: Optional[int] = DEFAULT_THINKING_BUDGET,
     media: Optional[List[Tuple[str, bytes]]] = None,
     model: Optional[str] = None,
+    attempt: int = 0,
 ) -> Tuple[str, str]:
-    """Call the model. Returns (text, finish_reason).
+    """One Gemini call, no fallback. Returns (text, finish_reason).
 
     `media` is a list of (mime_type, bytes) sent inline before the prompt -
     images and PDFs, for OCR. `model` overrides settings.gemini_model for
@@ -139,6 +401,10 @@ async def _generate_raw(
     """
     if not settings.gemini_api_key:
         raise GeminiError("GEMINI_API_KEY is not set. Add it to backend/.env.")
+
+    fake = _simulated_failure(attempt)
+    if fake:
+        raise fake
 
     model_name = model or settings.gemini_model
     url = f"{GEMINI_BASE}/models/{model_name}:generateContent"
@@ -158,12 +424,7 @@ async def _generate_raw(
     }
 
     client = _get_client()
-    resp = await client.post(
-        url,
-        params={"key": settings.gemini_api_key},
-        json=payload,
-        headers={"Content-Type": "application/json"},
-    )
+    resp = await client.post(url, json=payload, headers=_auth_headers())
 
     # Not every model in the family accepts thinkingConfig. If that is
     # what it objected to, drop the field and go again rather than
@@ -175,15 +436,10 @@ async def _generate_raw(
                 model_name,
             )
             generation_config.pop("thinkingConfig")
-            resp = await client.post(
-                url,
-                params={"key": settings.gemini_api_key},
-                json=payload,
-                headers={"Content-Type": "application/json"},
-            )
+            resp = await client.post(url, json=payload, headers=_auth_headers())
 
     if resp.status_code >= 400:
-        raise GeminiError(f"Gemini API error {resp.status_code}: {resp.text[:400]}")
+        raise _api_error(resp.status_code, resp.text)
     data = resp.json()
 
     try:
@@ -219,6 +475,113 @@ async def _generate_raw(
         )
 
     return text, finish_reason
+
+
+async def _groq_complete(
+    call: Dict[str, Any],
+    gemini_exc: GeminiError,
+) -> Tuple[str, str]:
+    """Groq as the fallback. If Groq fails too, the Gemini error is what gets
+    raised, so callers see the same failure they always did."""
+    try:
+        text, finish = await groq_client.complete_json(
+            call["prompt"], call["system_instruction"],
+            temperature=call["temperature"],
+            max_output_tokens=call["max_output_tokens"],
+        )
+    except groq_client.GroqError as gexc:
+        logger.error("Groq fallback failed: %s", gexc)
+        raise gemini_exc from gexc
+    logger.info("Groq fallback succeeded")
+    return text, finish
+
+
+def _on_quota_error(exc: GeminiError, media) -> None:
+    """Decide what a 429 does. Returns only if Groq should take the call;
+    raises the 429 unchanged otherwise."""
+    if media:
+        # Groq cannot read images or PDFs, so nothing can serve this call.
+        # No cooldown is started from here: text calls will find out about
+        # the quota on their own next call and fall back then.
+        logger.warning("Gemini quota exceeded (429) on a document/image call - "
+                       "no text-only fallback possible")
+        raise exc
+    if not _quota_fallback_ready():
+        raise exc
+    seconds = _start_quota_cooldown(exc)
+    logger.warning("Gemini quota exceeded (429%s) - switching to Groq fallback; "
+                   "skipping Gemini for %.0fs",
+                   ", daily limit" if exc.per_day else "", seconds)
+
+
+async def _generate_raw(
+    prompt: str,
+    system_instruction: str,
+    temperature: float = 0.2,
+    max_output_tokens: int = 2048,
+    thinking_budget: Optional[int] = DEFAULT_THINKING_BUDGET,
+    media: Optional[List[Tuple[str, bytes]]] = None,
+    model: Optional[str] = None,
+) -> Tuple[str, str]:
+    """Gemini first; Groq only on 503 (after one retry) or 429 (no retry).
+
+    Same signature and return value as before the fallback existed; every
+    caller in the app goes through here.
+    """
+    call = dict(
+        prompt=prompt,
+        system_instruction=system_instruction,
+        temperature=temperature,
+        max_output_tokens=max_output_tokens,
+        thinking_budget=thinking_budget,
+        media=media,
+        model=model,
+    )
+
+    # Quota cooldown: skip Gemini entirely for text calls. Image/PDF calls
+    # still try Gemini - nothing else can serve them, and if the quota has
+    # come back, their success clears the cooldown for everyone.
+    remaining = _quota_cooldown_remaining()
+    if remaining and not media and _quota_fallback_ready():
+        logger.info("Gemini quota cooldown active (%.0fs left) - using Groq", remaining)
+        return await _groq_complete(call, GeminiQuotaExceeded(
+            "Gemini API error 429: quota cooldown active", status_code=429))
+
+    unavailable: Optional[GeminiError] = None
+    for attempt in (0, 1):
+        if attempt == 0:
+            logger.info("Gemini request started (model=%s)", model or settings.gemini_model)
+        else:
+            await asyncio.sleep(_backoff(0))
+        try:
+            result = await _gemini_generate_raw(**call, attempt=attempt)
+            logger.info("Gemini %s succeeded", "retry" if attempt else "request")
+            _clear_quota_cooldown()
+            return result
+        except GeminiError as exc:
+            if is_gemini_quota_error(exc):
+                _on_quota_error(exc, media)          # raises unless Groq should answer
+                return await _groq_complete(call, exc)
+            if not is_gemini_503_error(exc):
+                raise
+            unavailable = exc
+            if attempt == 0:
+                logger.warning("Gemini returned 503 - retrying")
+
+    assert unavailable is not None
+    if media:
+        # Groq's text models cannot read inline PDFs or images, so an OCR
+        # call has nowhere to go. Fail it the way it always failed.
+        logger.warning("Gemini retry returned 503 on a document/image call - "
+                       "no text-only fallback possible")
+        raise unavailable
+    if not _fallback_ready():
+        logger.warning("Gemini retry returned 503 - Groq fallback is disabled")
+        raise unavailable
+
+    logger.warning("Gemini retry returned 503 - switching to Groq fallback (model=%s)",
+                   settings.groq_model)
+    return await _groq_complete(call, unavailable)
 
 
 async def _generate(
@@ -444,21 +807,29 @@ def _partial_body(raw: str) -> str:
     return "".join(out)
 
 
-async def _stream_raw(
+async def _gemini_stream_raw(
     prompt: str,
     system_instruction: str,
     temperature: float = 0.2,
     max_output_tokens: int = 2048,
     thinking_budget: Optional[int] = DEFAULT_THINKING_BUDGET,
+    attempt: int = 0,
 ) -> AsyncIterator[Tuple[str, Any]]:
-    """Yield ("delta", new_text) as the body arrives, then ("raw", full_json).
+    """One Gemini stream, no fallback.
 
+    Yields ("delta", new_text) as the body arrives, then ("raw", full_json).
     The caller parses the final payload with the same _parse_json used by the
     non-streaming path, so truncation repair and finishReason reporting behave
     identically.
     """
     if not settings.gemini_api_key:
         raise GeminiError("GEMINI_API_KEY is not set. Add it to backend/.env.")
+
+    midstream = _simulate_mode() == "midstream"
+    if not midstream:
+        fake = _simulated_failure(attempt)
+        if fake:
+            raise fake
 
     url = f"{GEMINI_BASE}/models/{settings.gemini_model}:streamGenerateContent"
 
@@ -484,13 +855,12 @@ async def _stream_raw(
     async with client.stream(
         "POST",
         url,
-        params={"key": settings.gemini_api_key, "alt": "sse"},
+        params={"alt": "sse"},
         json=payload,
-        headers={"Content-Type": "application/json"},
+        headers=_auth_headers(),
     ) as resp:
         if resp.status_code >= 400:
-            detail = (await resp.aread())[:400]
-            raise GeminiError(f"Gemini API error {resp.status_code}: {detail!r}")
+            raise _api_error(resp.status_code, await resp.aread())
 
         async for line in resp.aiter_lines():
             if not line.startswith("data:"):
@@ -502,6 +872,14 @@ async def _stream_raw(
                 obj = json.loads(chunk)
             except json.JSONDecodeError:
                 continue
+
+            # An overload can also arrive AFTER the 200, as an error object
+            # inside the stream. It used to be skipped here, which left a
+            # half-written answer to fail JSON parsing with a misleading
+            # message. Raised now, with its real status.
+            if isinstance(obj, dict) and obj.get("error"):
+                err = obj["error"] if isinstance(obj["error"], dict) else {}
+                raise _api_error(int(err.get("code") or 500), json.dumps(err))
 
             try:
                 candidate = obj["candidates"][0]
@@ -516,8 +894,133 @@ async def _stream_raw(
                 yield "delta", body_so_far[emitted:]
                 emitted = len(body_so_far)
 
+            if midstream and emitted > 0:
+                fake = _simulated_failure(attempt)
+                if fake:
+                    raise fake
+
     logger.info("GEMINI stream chars=%d finish=%s", len(buf), finish_reason)
     yield "raw", (buf.strip(), finish_reason)
+
+
+async def _groq_stream_raw(
+    prompt: str,
+    system_instruction: str,
+    temperature: float = 0.2,
+    max_output_tokens: int = 2048,
+) -> AsyncIterator[Tuple[str, Any]]:
+    """Groq's stream in the exact shape of _gemini_stream_raw: the same
+    ("delta", ...) pieces of the body, then ("raw", (json, finish_reason))."""
+    buf = ""
+    emitted = 0
+    finish_reason = "UNKNOWN"
+
+    async for kind, value in groq_client.stream_json(
+        prompt, system_instruction,
+        temperature=temperature,
+        max_output_tokens=max_output_tokens,
+    ):
+        if kind == "finish":
+            finish_reason = value
+            continue
+        buf += value
+        body_so_far = _partial_body(buf)
+        if len(body_so_far) > emitted:
+            yield "delta", body_so_far[emitted:]
+            emitted = len(body_so_far)
+
+    yield "raw", (groq_client.strip_reasoning(buf), finish_reason)
+
+
+async def _stream_raw(
+    prompt: str,
+    system_instruction: str,
+    temperature: float = 0.2,
+    max_output_tokens: int = 2048,
+    thinking_budget: Optional[int] = DEFAULT_THINKING_BUDGET,
+) -> AsyncIterator[Tuple[str, Any]]:
+    """Gemini stream first; Groq only on 503 (after one retry) or 429.
+
+    Yields ("delta", text) and finally ("raw", (json, finish_reason)), as
+    before - plus, in one rare case, ("reset", None).
+
+    The problem a stream adds: if a failure arrives after some of the body
+    has already gone to the browser, whatever answers next starts from the
+    beginning, and streaming its deltas would print the opening twice. So:
+
+    - failure before any text went out: the next attempt streams normally.
+      The reader never knows anything happened.
+    - failure after text went out: yield ("reset", None) once, then run the
+      next attempt silently (deltas swallowed). The caller replaces the
+      partial body with the finished one when "raw" arrives.
+    """
+    call = dict(
+        prompt=prompt,
+        system_instruction=system_instruction,
+        temperature=temperature,
+        max_output_tokens=max_output_tokens,
+    )
+
+    streamed = False        # any body text reached the caller
+    silent = False          # "reset" sent; swallow deltas from now on
+    failure: Optional[GeminiError] = None
+
+    remaining = _quota_cooldown_remaining()
+    if remaining and _quota_fallback_ready():
+        logger.info("Gemini quota cooldown active (%.0fs left) - using Groq", remaining)
+        failure = GeminiQuotaExceeded("Gemini API error 429: quota cooldown active",
+                                      status_code=429)
+    else:
+        for attempt in (0, 1):
+            if attempt == 0:
+                logger.info("Gemini request started (stream, model=%s)", settings.gemini_model)
+            else:
+                await asyncio.sleep(_backoff(0))
+            try:
+                async for kind, value in _gemini_stream_raw(
+                    **call, thinking_budget=thinking_budget, attempt=attempt
+                ):
+                    if kind == "delta":
+                        if silent:
+                            continue
+                        streamed = True
+                    yield kind, value
+                logger.info("Gemini %s succeeded", "retry" if attempt else "request")
+                _clear_quota_cooldown()
+                return
+            except GeminiError as exc:
+                quota = is_gemini_quota_error(exc)
+                if quota:
+                    _on_quota_error(exc, None)       # raises unless Groq should answer
+                elif not is_gemini_503_error(exc):
+                    raise
+                failure = exc
+                if streamed and not silent:
+                    silent = True
+                    yield "reset", None
+                if quota:
+                    break                            # no Gemini retry on a 429
+                if attempt == 0:
+                    logger.warning("Gemini returned 503%s - retrying",
+                                   " mid-stream" if streamed else "")
+        else:
+            # Both attempts were 503s (the loop did not break on a 429).
+            if not _fallback_ready():
+                logger.warning("Gemini retry returned 503 - Groq fallback is disabled")
+                raise failure
+            logger.warning("Gemini retry returned 503 - switching to Groq fallback (model=%s)",
+                           settings.groq_model)
+
+    assert failure is not None
+    try:
+        async for kind, value in _groq_stream_raw(**call):
+            if kind == "delta" and silent:
+                continue
+            yield kind, value
+    except groq_client.GroqError as gexc:
+        logger.error("Groq fallback failed: %s", gexc)
+        raise failure from gexc
+    logger.info("Groq fallback succeeded")
 
 
 # --------------------------------------------------------------------------
@@ -689,9 +1192,15 @@ async def synthesize_stream(
     ("draft", dict) with the fully parsed answer. The draft is authoritative:
     the deltas are the same characters, but the caller should use the parsed
     body for anything it stores.
+
+    If the provider failed part-way through and a retry or the fallback
+    finished the answer, ("replace", body) comes just before "draft": the
+    deltas already sent are a fragment of an abandoned attempt and the
+    caller must swap them for this body.
     """
     raw = ""
     finish_reason = "UNKNOWN"
+    reset = False
 
     async for kind, value in _stream_raw(
         _synthesis_prompt(question, state, sources, history, document),
@@ -701,10 +1210,15 @@ async def synthesize_stream(
     ):
         if kind == "delta":
             yield "delta", value
+        elif kind == "reset":
+            reset = True
         else:
             raw, finish_reason = value
 
-    yield "draft", _shape_draft(_parse_json(raw, finish_reason))
+    draft = _shape_draft(_parse_json(raw, finish_reason))
+    if reset:
+        yield "replace", draft["body"]
+    yield "draft", draft
 
 
 # --------------------------------------------------------------------------
