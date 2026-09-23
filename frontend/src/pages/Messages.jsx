@@ -187,7 +187,10 @@ export default function Messages() {
   const { threadId } = useParams();
   // Only the view in front of the user mounts, so only it fetches and polls.
   return (
-    <NetworkPage active="messages">
+    // `fill` only for an open conversation: it is a fixed column (header,
+    // scrolling history, composer at the bottom) and must stay viewport-tall
+    // at every width. The list is an ordinary page and keeps page scroll.
+    <NetworkPage active="messages" fill={!!threadId}>
       {threadId ? <Conversation key={threadId} threadId={threadId} /> : <ThreadList />}
     </NetworkPage>
   );

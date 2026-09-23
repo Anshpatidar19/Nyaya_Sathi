@@ -611,6 +611,26 @@ footer.site-footer{border-top:1px solid var(--line); padding:56px 0 34px; margin
   .ask-conversation{height:auto;}
   .ask-thread{padding:18px 16px 8px;}
   .ask-form-dock{padding:12px 16px 16px;}
+
+  /* Chat surfaces keep a bounded, viewport-tall shell at every width.
+     The rules above switch the shell to ordinary page scroll (height:auto)
+     below 900px - right for Matters and the profile pages, wrong for a
+     conversation: the column's height:100% then resolves to "as tall as the
+     messages", so the composer sat directly under a short thread with blank
+     page beneath it. A half-screen window at 125% Windows scaling is
+     ~770px wide, which is exactly when that showed up.
+     .ask-app-fill (set by Ask and by an open Messages conversation) restores
+     the column: topbar, then a shell that takes the rest of the viewport,
+     where the thread scrolls and the composer stays at the bottom.
+     dvh after vh so mobile browsers measure past their collapsing URL bar.
+     The topbar keeps its sticky + z-index from above: nothing scrolls past
+     it here, but it still has to stack over the overlay sidebar. */
+  .ask-app.ask-app-fill{height:100vh; height:100dvh; min-height:0;}
+  .ask-app-fill .ask-shell{flex:1; min-height:0; height:auto; overflow:hidden;}
+  .ask-app-fill .ask-layout{height:100%; overflow:hidden;}
+  .ask-app-fill .ask-main{flex:1; min-height:0; height:100%; overflow:hidden;}
+  .ask-app-fill .ask-welcome{height:100%;}
+  .ask-app-fill .ask-conversation{height:100%;}
 }
 
 /* ---- Draft output ---- */

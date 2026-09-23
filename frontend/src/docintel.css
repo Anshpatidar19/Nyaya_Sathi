@@ -191,6 +191,21 @@
 }
 .nx-msg.mine + .di-card { margin-left: auto; }
 
+/* The Ask page's variant: the full analysis, inline, as the answer to the
+   upload. It takes the answer column's full width like any other Ask
+   result, rather than the chat card's bubble-sized measure. */
+.di-card.di-card-full {
+  max-width: 100%;
+  margin: 0;
+  padding: 16px 18px 18px;
+}
+.di-card-full .di-card-head { margin-bottom: 12px; }
+.di-card-file {
+  min-width: 0;
+  font-size: 12.5px; font-weight: 600; color: var(--ink-muted);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+
 .di-card-head {
   display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
   margin-bottom: 8px;
@@ -519,6 +534,10 @@
 }
 
 @media (max-width: 900px) {
-  .di-shell { height: auto; }
+  /* No height override here any more. It used to be height:auto, to match
+     the shell switching to page scroll below 900px - which is what let the
+     composer ride up under a short conversation on a split screen. The
+     conversation page now keeps a bounded shell at every width (see
+     .ask-app-fill in styles.css), so the base height:100% is correct. */
   .di-panel-head { padding-top: 16px; }
 }

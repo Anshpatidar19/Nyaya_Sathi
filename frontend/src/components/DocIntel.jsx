@@ -1,4 +1,6 @@
-/* AI document intelligence for the advocate-client chat.
+/* AI document intelligence for the advocate-client chat - and, through
+   AnalysisCard's "standalone" variant, for an advocate's own upload on the
+   Ask page.
 
    The whole feature lives here and hangs off three seams in Messages.jsx:
    a menu button next to an attachment, a card under it, and a panel beside
@@ -483,8 +485,64 @@ function severityLabel(level) {
 
 /* ------------------------------------------------------- compact card */
 
-function AnalysisCard({ state, onExpand, onQuestions, onAsk, onRetry, onDismiss }) {
+/* One card, two contexts.
+
+     variant="chat"        (default) the advocate-client conversation: a
+                           compact summary under the file, plus the three
+                           chat actions - Full analysis, Suggest questions,
+                           Ask AI - which open the side panel.
+     variant="standalone"  the Ask page, for the advocate's own upload:
+                           the full analysis inline, and none of the three
+                           actions. Suggest questions and Ask AI are built
+                           around a client on the other side of a thread,
+                           and there is no panel on Ask to expand into.
+
+   The analysis itself is not duplicated - standalone renders the same
+   AnalysisView the panel's Analysis tab uses. */
+export function AnalysisCard({
+  state,
+  variant = 'chat',
+  filename,
+  onExpand,
+  onQuestions,
+  onAsk,
+  onRetry,
+  onDismiss,
+}) {
   const a = state.analysis;
+
+  if (variant === 'standalone') {
+    return (
+      <div className="di-card di-card-full">
+        <div className="di-card-head">
+          <span className="di-badge">
+            {I.spark}
+            AI analysis
+          </span>
+          {filename && (
+            <span className="di-card-file" title={filename}>
+              {filename}
+            </span>
+          )}
+          <span className="di-spacer" />
+          {onDismiss && (
+            <button
+              type="button"
+              className="di-icon-btn"
+              onClick={onDismiss}
+              title="Hide this analysis"
+              aria-label="Hide this analysis"
+            >
+              {I.close}
+            </button>
+          )}
+        </div>
+        {/* No onTab: without a panel there is nowhere for "Turn these into
+            client questions" to go, so AnalysisView leaves it out. */}
+        <AnalysisView state={state} onReload={onRetry} />
+      </div>
+    );
+  }
 
   return (
     <div className="di-card">
@@ -657,9 +715,11 @@ function AnalysisView({ state, onReload, onTab }) {
         <span className="di-type lg">{a.document_type}</span>
         <span className={`di-conf-dot ${a.confidence}`} title={`${a.confidence} confidence`} />
         <span className="di-spacer" />
-        <button type="button" className="di-link" onClick={onReload}>
-          Re-run
-        </button>
+        {onReload && (
+          <button type="button" className="di-link" onClick={onReload}>
+            Re-run
+          </button>
+        )}
       </div>
 
       <p className="di-summary">{a.summary}</p>
@@ -685,9 +745,11 @@ function AnalysisView({ state, onReload, onTab }) {
               </div>
             </div>
           ))}
-          <button type="button" className="di-btn primary wide" onClick={() => onTab('questions')}>
-            Turn these into client questions
-          </button>
+          {onTab && (
+            <button type="button" className="di-btn primary wide" onClick={() => onTab('questions')}>
+              Turn these into client questions
+            </button>
+          )}
         </div>
       )}
 

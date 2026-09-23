@@ -6,6 +6,11 @@ import ArgumentsResult from '../components/ArgumentsResult';
 import '../thinking.css';
 import ArgumentsSetup from '../components/ArgumentsSetup';
 import DocTypeSelect from '../components/DocTypeSelect';
+// The chat's document analysis, reused as-is: same backend extraction, same
+// result card. Ask renders it in its "standalone" variant (full analysis,
+// none of the chat-only actions).
+import { AnalysisCard } from '../components/DocIntel';
+import { analyzeOwnDocument } from '../docIntelApi';
 import {
   askQuestion,
   askQuestionStream,
@@ -415,6 +420,34 @@ export default function Ask() {
     if (fileInputRef.current) fileInputRef.current.value = '';
   }
 
+  /* Re-run for an Ask-page document analysis. Patches the turn in place,
+     matched by index AND document id - if the thread was cleared or
+     replaced while the request was out, the result is simply dropped. */
+  function patchDocIntel(idx, documentId, changes) {
+    setTurns((t) => {
+      const cur = t[idx];
+      if (!cur || cur.documentId !== documentId || !cur.docIntel) return t;
+      const next = [...t];
+      next[idx] = { ...cur, docIntel: { ...cur.docIntel, ...changes } };
+      return next;
+    });
+  }
+
+  async function rerunAnalysis(idx) {
+    const documentId = turns[idx]?.documentId;
+    if (!documentId) return;
+    patchDocIntel(idx, documentId, { analysisLoading: true, analysisError: '' });
+    try {
+      const analysis = await analyzeOwnDocument(token, documentId, { force: true });
+      patchDocIntel(idx, documentId, { analysis, analysisLoading: false });
+    } catch (err) {
+      patchDocIntel(idx, documentId, {
+        analysisLoading: false,
+        analysisError: err.message,
+      });
+    }
+  }
+
   async function handleFilePicked(e) {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -473,14 +506,58 @@ export default function Ask() {
     // "I asked about this file" than an empty bubble.
     const bubble = prompt.trim() || (sentFile ? sentFile.filename : '');
 
+    // An advocate's own upload in Ask gets the chat's document analysis -
+    // the same extraction and the same card the advocate sees on a client's
+    // file in Messages. A question typed alongside the file is still
+    // answered by the normal grounded Ask pipeline (retrieval, citations,
+    // streaming), with the file as context, directly under the analysis.
+    // General users keep Ask exactly as it was.
+    const analyseFile = mode === 'ask' && isAdvocate && !!sentFile;
+
     setError('');
     setLoading(true);
     setInput('');
-    setTurns((t) => [...t, { kind: 'pending', prompt: bubble, file: sentFile?.filename }]);
+    setTurns((t) => [
+      ...t,
+      {
+        kind: 'pending',
+        prompt: bubble,
+        file: sentFile?.filename,
+        label: analyseFile ? 'Reading the document\u2026' : undefined,
+      },
+    ]);
 
     try {
       let turn;
-      if (mode === 'ask') {
+      // Carried into the finished Ask turn, so the analysis stays above the
+      // answer once the streamed payload replaces the pending turn.
+      let docIntel = null;
+
+      if (analyseFile) {
+        const analysis = await analyzeOwnDocument(token, sentFile.id);
+        docIntel = { analysis, analysisLoading: false, analysisError: '' };
+        const analysed = {
+          prompt: bubble,
+          file: sentFile.filename,
+          documentId: sentFile.id,
+          docIntel,
+        };
+        if (!prompt.trim()) {
+          // File only: the analysis IS the answer.
+          turn = { kind: 'docintel', ...analysed };
+        } else {
+          // Show the analysis now and keep the turn pending while the
+          // question is answered below it.
+          setTurns((t) => [
+            ...t.slice(0, -1),
+            { kind: 'pending', ...analysed },
+          ]);
+        }
+      }
+
+      if (turn) {
+        // Already settled by the analysis step above.
+      } else if (mode === 'ask') {
         // The pending turn becomes the answer in place: text lands in it as
         // it streams, then the finished payload replaces it wholesale. The
         // reader never sees the card jump.
@@ -542,7 +619,13 @@ export default function Ask() {
           setConversationId(data.conversation_id);
           thread.remember(data.conversation_id);
         }
-        turn = { kind: 'ask', ...data, prompt: bubble, file: sentFile?.filename };
+        turn = {
+          kind: 'ask',
+          ...data,
+          prompt: bubble,
+          file: sentFile?.filename,
+          ...(docIntel ? { docIntel, documentId: sentFile.id } : {}),
+        };
         refreshHistory({ fresh: true });   // the new thread must appear now
       } else if (mode === 'draft') {
         const data = await createDraft(token, {
@@ -765,7 +848,9 @@ export default function Ask() {
   );
 
   return (
-    <div className="ask-app">
+    // ask-app-fill: Ask is a fixed column (thread scrolls, composer at the
+    // bottom) at every width, including a half-screen window. styles.css.
+    <div className="ask-app ask-app-fill">
       {argueSetup}
       <AppTopbar
         sidebarOpen={sidebarOpen}
@@ -899,9 +984,21 @@ export default function Ask() {
                       )}
                       {t.prompt !== t.file && t.prompt}
                     </div>
+                    {/* An advocate's uploaded document: the chat's analysis
+                        card, without the chat-only actions. Above the
+                        answer when a question came with the file, and the
+                        whole reply when it didn't. */}
+                    {t.docIntel && t.kind !== 'rejected' && (
+                      <AnalysisCard
+                        variant="standalone"
+                        state={t.docIntel}
+                        filename={t.file}
+                        onRetry={() => rerunAnalysis(i)}
+                      />
+                    )}
                     {t.kind === 'pending' ? (
                       <div className="ask-thinking">
-                        <span className="spinner" /> Thinking through this…
+                        <span className="spinner" /> {t.label || 'Thinking through this…'}
                       </div>
                     ) : t.kind === 'streaming' ? (
                       <StreamingAnswer body={t.body} />
