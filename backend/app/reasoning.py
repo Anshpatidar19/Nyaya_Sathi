@@ -712,6 +712,14 @@ async def answer_question_stream(
         ):
             if kind == "delta":
                 yield "delta", value
+            elif kind == "replace":
+                # The model failed after part of the answer had streamed, and
+                # a retry (or the Groq fallback) wrote the whole answer again.
+                # The fragment on screen is swapped for the finished body via
+                # the existing "revised" event - the same one the validator
+                # uses - so the frontend needs no change. Sent before "done",
+                # so there is no stored row to correct yet.
+                yield "revised", value
             else:
                 draft = value
     except gemini.GeminiError as exc:

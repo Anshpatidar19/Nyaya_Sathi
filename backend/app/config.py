@@ -20,6 +20,43 @@ class Settings(BaseSettings):
     # actually need OCR use it; text PDFs and Word files never call it.
     gemini_ocr_model: str = os.getenv("GEMINI_OCR_MODEL", "")
 
+    # --- Groq fallback -----------------------------------------------------
+    # Groq is NOT a second primary. It is called only when Gemini returns a
+    # 503 / UNAVAILABLE ("model is experiencing high demand") on the original
+    # call AND on one backed-off retry. Any other Gemini error (400, 401, 403,
+    # 429, parse failures) is raised exactly as before.
+    #
+    # With GROQ_API_KEY unset, or LLM_FALLBACK_ENABLED=0, the fallback is off
+    # and a double 503 fails the request the way it always did.
+    groq_api_key: str = os.getenv("GROQ_API_KEY", "")
+    # llama-3.3-70b-versatile was shut down for free/dev tiers on 16 Aug 2026;
+    # gpt-oss-120b is Groq's recommended replacement.
+    groq_model: str = os.getenv("GROQ_MODEL", "openai/gpt-oss-120b")
+    llm_fallback_enabled: bool = os.getenv("LLM_FALLBACK_ENABLED", "1") not in ("0", "false", "False")
+    # Base delay before the single Gemini retry. Actual wait is this plus up
+    # to 50% jitter, so two concurrent requests don't retry in lockstep.
+    gemini_retry_base_delay: float = float(os.getenv("GEMINI_RETRY_BASE_DELAY", "1.0"))
+    # Quota (429) fallback. On a 429 Gemini is NOT retried - that only spends
+    # another request against a limit already hit - the call goes straight to
+    # Groq and Gemini is skipped for a cooldown: the retryDelay Gemini sends,
+    # or 60s if it sends none, capped at GEMINI_QUOTA_COOLDOWN_MAX. A daily
+    # limit uses the full cap. When the cooldown ends Gemini is tried first
+    # again, so it returns as primary as soon as the quota resets.
+    # LLM_FALLBACK_ENABLED=0 still switches off both fallbacks.
+    llm_quota_fallback_enabled: bool = os.getenv("LLM_QUOTA_FALLBACK_ENABLED", "1") not in ("0", "false", "False")
+    gemini_quota_cooldown_max: float = float(os.getenv("GEMINI_QUOTA_COOLDOWN_MAX", "300"))
+    # DEVELOPMENT ONLY - makes Gemini calls fail with a fake 503 before any
+    # network request is sent, so the fallback can be tested without burning
+    # quota. Leave empty in any real deployment.
+    #   once      - first attempt fails, the retry reaches Gemini for real
+    #   always    - both attempts fail, so Groq answers
+    #   quota     - every Gemini call fails with a fake 429 (30s retryDelay),
+    #               so Groq answers and the cooldown starts
+    #   midstream - streaming calls fail AFTER a few words have been sent
+    #               (tests the no-duplicate-text path); buffered calls
+    #               behave like "always"
+    gemini_simulate_503: str = os.getenv("GEMINI_SIMULATE_503", "")
+
     # Supabase Postgres. Session pooler URI from
     # Project Settings -> Database -> Connection string -> URI
     database_url: str = os.getenv("DATABASE_URL", "")
