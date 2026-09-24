@@ -333,3 +333,19 @@
   .ab-fab { right: 16px; bottom: 16px; width: 58px; height: 58px; }
   .ab-factors li { grid-template-columns: 84px 1fr 40px; }
 }
+/* "Near you" - shown only when the advocate practises in the city being
+   searched (the user's own, unless the question named another). Replaces
+   the old score ring: proximity is the one ranking signal worth a badge. */
+.ab-near {
+  align-self: flex-start;
+  flex-shrink: 0;
+  margin-left: auto;
+  padding: 3px 9px;
+  border-radius: 999px;
+  border: 1px solid var(--mint-line);
+  background: var(--mint);
+  color: var(--accent-dark);
+  font-size: 11.5px;
+  font-weight: 700;
+  white-space: nowrap;
+}

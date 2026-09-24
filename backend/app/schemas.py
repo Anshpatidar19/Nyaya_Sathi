@@ -477,6 +477,9 @@ class ConversationDetail(BaseModel):
     mode: str
     created_at: datetime
     turns: list[TurnOut] = []
+    # Set when the thread is filed under a matter, so the matter's research
+    # page can refuse to open a thread that belongs to a different case.
+    matter_id: Optional[int] = None
 
 
 # MatterDetail references ConversationOut, which is defined below it.

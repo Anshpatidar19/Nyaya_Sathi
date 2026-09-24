@@ -17,7 +17,7 @@ import logging
 import re
 import time
 from dataclasses import dataclass, field
-from typing import Any, AsyncIterator, Dict, List, Optional, Tuple
+from typing import Any, AsyncIterator, Callable, Dict, List, Optional, Tuple
 
 from . import gemini, kanoon, routing, statutes, validity
 from .config import settings
@@ -375,11 +375,52 @@ def _local_sources(
     return sources, statute_hits
 
 
+# A progress callback: report(stage, detail). Stages are a fixed vocabulary
+# the frontend knows how to draw -
+#   search    - local BM25 pass over the bare acts is running
+#   fetch     - pulling the material that pass (and the router) chose:
+#               statute text, Kanoon search, judgment fragments
+#   analyze   - synthesis has started; the model is reading the sources
+#   generate  - the first word of the answer has arrived
+#   finalize  - prose finished; citations and grounding being assembled
+# Each one is emitted at the moment that work actually begins, so the
+# indicator on screen is a readout of the pipeline, not an animation.
+Reporter = Optional[Callable[[str, str], None]]
+
+
+def _report(report: Reporter, stage: str, detail: str) -> None:
+    if report is None:
+        return
+    try:
+        report(stage, detail)
+    except Exception:   # progress is cosmetic; it must never break an answer
+        logger.debug("Progress report failed for stage %s", stage)
+
+
+def matter_anchors(question: str, matter: Optional[Dict[str, Any]]) -> str:
+    """Statute anchors from the matter file, for retrieval only.
+
+    A follow-up asked inside a matter - "what defences are available?" -
+    has no retrievable terms of its own; the case file does ("Section 138,
+    Negotiable Instruments Act"). Only the provisions the file NAMES are
+    borrowed, the same extraction used for an attached document, and only
+    when the question names none itself - a question that already points
+    at a provision must not be dragged towards a different one.
+    """
+    if not matter or not matter.get("anchors_text"):
+        return ""
+    if document_query(question):
+        return ""
+    return document_query(matter["anchors_text"], limit=4)
+
+
 async def retrieve(
     question: str,
     state: Optional[str],
     history: Optional[List[Dict[str, str]]] = None,
     document: Optional[Dict[str, str]] = None,
+    report: Reporter = None,
+    matter: Optional[Dict[str, Any]] = None,
 ) -> Retrieved:
     """Bare acts first, then case law. Either source alone is enough to answer.
 
@@ -402,7 +443,15 @@ async def retrieve(
     # With a document attached, "explain this" carries no retrievable terms.
     # The provisions the document itself names are what to look up.
     doc_terms = document_query(document["text"]) if document and document.get("text") else ""
-    retrieval_text = f"{question} {doc_terms}".strip() if doc_terms else question
+    matter_terms = "" if doc_terms else matter_anchors(question, matter)
+    extra = " ".join(t for t in (doc_terms, matter_terms) if t)
+    retrieval_text = f"{question} {extra}".strip() if extra else question
+
+    _report(
+        report, "search",
+        "Reading your document and searching the provisions it names"
+        if document else "Searching the statute database",
+    )
 
     # Act-level question ("tell me about BNS") - BM25 can't help, answer
     # directly. Pure regex against a dictionary, so it stays inline.
@@ -429,6 +478,17 @@ async def retrieve(
 
     decision = early or routing.decide(retrieval_text, statute_hits, overview)
     found = Retrieved(sources=sources, statute_hits=statute_hits)
+
+    n_local = len(sources)
+    section_word = "section" if n_local == 1 else "sections"
+    if decision.call_kanoon:
+        _report(
+            report, "fetch",
+            f"Found {n_local} statute {section_word} - searching case law on Indian Kanoon"
+            if n_local else "Searching case law on Indian Kanoon",
+        )
+    else:
+        _report(report, "fetch", f"Fetching {n_local} matching statute {section_word}")
 
     if not decision.call_kanoon:
         # Only reachable with a live search_task if prejudge and decide
@@ -462,6 +522,11 @@ async def retrieve(
     # Spend document fetches on the judgments most worth reading.
     t_hydrate = time.perf_counter()
     ranked = kanoon.rank_by_citations(results[:TOP_K * 2], top=decision.doc_fetches)
+    if ranked:
+        _report(
+            report, "fetch",
+            f"Reading {len(ranked)} relevant judgment{'s' if len(ranked) != 1 else ''}",
+        )
     found.sources.extend(await _hydrate(ranked, query))
     t_hydrate = time.perf_counter() - t_hydrate
 
@@ -486,6 +551,7 @@ async def run_live_pipeline(
     state: str | None,
     history: Optional[List[Dict[str, str]]] = None,
     document: Optional[Dict[str, str]] = None,
+    matter: Optional[Dict[str, Any]] = None,
 ) -> AskResponse | None:
     """Retrieval -> Synthesis -> Internal Validator."""
     if not settings.gemini_api_key:
@@ -506,7 +572,7 @@ async def run_live_pipeline(
             )
 
     t0 = time.perf_counter()
-    found = await retrieve(question, state, history, document)
+    found = await retrieve(question, state, history, document, matter=matter)
     sources = found.sources
     t_retrieve = time.perf_counter() - t0
 
@@ -518,7 +584,9 @@ async def run_live_pipeline(
 
     t1 = time.perf_counter()
     try:
-        draft = await gemini.synthesize(question, state, sources, history, document)
+        draft = await gemini.synthesize(
+            question, state, sources, history, document, matter=matter
+        )
     except gemini.GeminiError as exc:
         logger.warning("Gemini synthesis failed: %s", exc)
         return None
@@ -544,7 +612,7 @@ async def run_live_pipeline(
         verdict = (
             {"grounded": True, "issues": [], "revised_body": ""}
             if (document or overview_only)
-            else await gemini.validate(question, draft, sources, state)
+            else await gemini.validate(question, draft, sources, state, matter=matter)
         )
         t_validate = time.perf_counter() - t2
         # One line per answer, so the split is visible without a profiler.
@@ -657,10 +725,13 @@ async def answer_question_stream(
     state: str | None = None,
     history: Optional[List[Dict[str, str]]] = None,
     document: Optional[Dict[str, str]] = None,
+    matter: Optional[Dict[str, Any]] = None,
 ) -> AsyncIterator[Tuple[str, Any]]:
     """Stream the answer as it is written.
 
     Yields:
+      ("status", dict)        - {"stage", "detail"}: which step of the
+                                pipeline has just started (see Reporter)
       ("delta", str)          - new characters of the body
       ("done", AskResponse)   - citations, next steps and the grounding badge
       ("revised", str)        - a corrected body, when the validator rejects
@@ -695,8 +766,50 @@ async def answer_question_stream(
             )
             return
 
+    def _status(stage: str, detail: str) -> Dict[str, str]:
+        return {"stage": stage, "detail": detail}
+
     t0 = time.perf_counter()
-    found = await retrieve(question, state, history, document)
+
+    # Retrieval runs as a task so its progress can be streamed while it
+    # works: retrieve() reports into this queue from inside the pipeline,
+    # and the loop below forwards each report the moment it lands.
+    progress: "asyncio.Queue[Tuple[str, str]]" = asyncio.Queue()
+    retrieval = asyncio.create_task(
+        retrieve(
+            question, state, history, document,
+            report=lambda stage, detail: progress.put_nowait((stage, detail)),
+            matter=matter,
+        )
+    )
+    getter: Optional[asyncio.Future] = None
+    try:
+        while True:
+            getter = asyncio.ensure_future(progress.get())
+            done, _ = await asyncio.wait(
+                {retrieval, getter}, return_when=asyncio.FIRST_COMPLETED
+            )
+            if getter in done:
+                yield "status", _status(*getter.result())
+                getter = None
+                if not retrieval.done():
+                    continue
+            else:
+                getter.cancel()
+                getter = None
+            break
+        while not progress.empty():
+            yield "status", _status(*progress.get_nowait())
+        found = retrieval.result()   # re-raises anything retrieve() raised
+    except BaseException:
+        # Client hung up mid-retrieval, or retrieval itself failed. Either
+        # way nothing is left to read the task's result.
+        if getter is not None:
+            getter.cancel()
+        if not retrieval.done():
+            retrieval.cancel()
+        raise
+
     sources = found.sources
     t_retrieve = time.perf_counter() - t0
 
@@ -704,13 +817,32 @@ async def answer_question_stream(
         yield "error", "Nothing relevant was retrieved for this question."
         return
 
+    n_sections = sum(1 for s_ in sources if s_.get("kind") in ("section", "overview"))
+    n_judgments = len(sources) - n_sections
+    parts = []
+    if n_sections:
+        parts.append(f"{n_sections} statute source{'s' if n_sections != 1 else ''}")
+    if n_judgments:
+        parts.append(f"{n_judgments} judgment{'s' if n_judgments != 1 else ''}")
+    if document:
+        parts.append("your document")
+    yield "status", _status(
+        "analyze",
+        "Analysing " + (" and ".join(parts) if parts else "the retrieved material")
+        + (" against this matter" if matter else ""),
+    )
+
     t1 = time.perf_counter()
     draft: Optional[Dict[str, Any]] = None
+    writing = False
     try:
         async for kind, value in gemini.synthesize_stream(
-            question, state, sources, history, document
+            question, state, sources, history, document, matter=matter
         ):
             if kind == "delta":
+                if not writing:
+                    writing = True
+                    yield "status", _status("generate", "Writing the answer")
                 yield "delta", value
             elif kind == "replace":
                 # The model failed after part of the answer had streamed, and
@@ -737,6 +869,7 @@ async def answer_question_stream(
         return
 
     body = draft["body"]
+    yield "status", _status("finalize", "Attaching citations and checking grounding")
 
     # --- Internal validator ---
     # Skipped for documents, exactly as in the buffered path - and for an
@@ -763,7 +896,7 @@ async def answer_question_stream(
     async def _verdict() -> Dict[str, Any]:
         if skip_validation:
             return {"grounded": True, "issues": [], "revised_body": ""}
-        return await gemini.validate(question, draft, sources, state)
+        return await gemini.validate(question, draft, sources, state, matter=matter)
 
     def _replacement(verdict: Dict[str, Any]) -> Optional[str]:
         """The body to show instead, or None if the draft stands."""
@@ -837,13 +970,14 @@ async def answer_question(
     state: str | None = None,
     history: Optional[List[Dict[str, str]]] = None,
     document: Optional[Dict[str, str]] = None,
+    matter: Optional[Dict[str, Any]] = None,
 ) -> AskResponse:
     """Answer a question, optionally about an attached document.
 
     `document` is {"filename": str, "text": str} and must already have passed
     the scope gate in doc_scope - this layer trusts that it is legal material.
     """
-    live = await run_live_pipeline(question, state, history, document)
+    live = await run_live_pipeline(question, state, history, document, matter)
     if live is not None:
         return live
 

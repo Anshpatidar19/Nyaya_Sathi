@@ -158,10 +158,14 @@ export async function askQuestion(token, { question, state, conversation_id, doc
 //
 // fetch + ReadableStream rather than EventSource: EventSource cannot send an
 // Authorization header or a POST body, and both are needed here.
+// `matter_id` scopes the question to a case file: the backend answers it
+// against that matter and files the thread under it. `onStatus` receives
+// {stage, detail} each time the pipeline starts a new step - search, fetch,
+// analyze, generate, finalize - as the server actually reaches it.
 export async function askQuestionStream(
   token,
-  { question, state, conversation_id, document_id },
-  { onDelta, onDone, onRevised } = {},
+  { question, state, conversation_id, document_id, matter_id },
+  { onDelta, onDone, onRevised, onStatus } = {},
 ) {
   const res = await fetch(`${BASE_URL}/ask/stream`, {
     method: 'POST',
@@ -169,7 +173,7 @@ export async function askQuestionStream(
       'Content-Type': 'application/json',
       Authorization: `Bearer ${token}`,
     },
-    body: JSON.stringify({ question, state, conversation_id, document_id }),
+    body: JSON.stringify({ question, state, conversation_id, document_id, matter_id }),
   });
 
   if (!res.ok) {
@@ -209,7 +213,8 @@ export async function askQuestionStream(
         continue;   // a frame we can't read is not worth failing the answer over
       }
 
-      if (event.type === 'delta') onDelta?.(event.text);
+      if (event.type === 'status') onStatus?.({ stage: event.stage, detail: event.detail });
+      else if (event.type === 'delta') onDelta?.(event.text);
       else if (event.type === 'revised') {
         revisedBody = event.body;
         onRevised?.(event.body);

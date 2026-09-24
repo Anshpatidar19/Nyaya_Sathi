@@ -19,7 +19,7 @@ from fastapi import (
 )
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import OAuth2PasswordRequestForm
-from sqlalchemy.orm import Session, joinedload
+from sqlalchemy.orm import Session, joinedload, selectinload
 
 from . import (
     arguments,
@@ -474,6 +474,122 @@ def _get_or_create_conversation(
     return convo
 
 
+# ---------------- Matter-scoped research ----------------
+#
+# A question asked from inside a matter is answered FOR that matter: the
+# case file travels with the question as context, and the thread is filed
+# under the matter so it never leaks into the general Ask history. The
+# brief is facts about the case only - the law still comes exclusively from
+# retrieval, and the synthesis and validator prompts both say so.
+
+MATTER_DESC_CHARS = 1500
+MATTER_NOTES_CHARS = 1000
+MATTER_NOTE_ENTRY_CHARS = 400
+
+
+def _clip(text: str | None, limit: int) -> str:
+    text = " ".join((text or "").split())
+    return text if len(text) <= limit else text[: limit - 1].rstrip() + "…"
+
+
+def _matter_context(
+    db: Session, user: models.User, matter_id: int | None
+) -> dict | None:
+    """The case file as prompt context, or None outside a matter.
+
+    Raises 404 for a matter that is not the caller's, so a crafted
+    matter_id can neither file a thread under someone else's case nor pull
+    their case file into a prompt.
+    """
+    if not matter_id:
+        return None
+
+    matter = (
+        db.query(models.Matter)
+        .options(
+            selectinload(models.Matter.events),
+            selectinload(models.Matter.notes_entries),
+            selectinload(models.Matter.documents),
+        )
+        .filter(models.Matter.id == matter_id, models.Matter.user_id == user.id)
+        .first()
+    )
+    if not matter:
+        raise HTTPException(status_code=404, detail="That matter doesn't exist, or isn't yours.")
+
+    lines = [f"Title: {matter.title}"]
+    if matter.client_name:
+        lines.append(f"Client: {matter.client_name}")
+    if matter.case_number:
+        lines.append(f"Case number: {matter.case_number}")
+    if matter.court:
+        lines.append(f"Court: {matter.court}")
+    if matter.side:
+        lines.append(f"The advocate appears for: {matter.side}")
+    if matter.tags:
+        lines.append(f"Tags: {matter.tags}")
+    if matter.description:
+        lines.append(f"Facts / description: {_clip(matter.description, MATTER_DESC_CHARS)}")
+    if matter.notes:
+        lines.append(f"Matter notes: {_clip(matter.notes, MATTER_NOTES_CHARS)}")
+
+    entries = list(matter.notes_entries or [])[:3]   # newest first by relationship order
+    if entries:
+        lines.append("Recent hearing notes:")
+        for n in entries:
+            head = f"{n.note_date}" + (f" - {n.title}" if n.title else "")
+            lines.append(f"  - {head}: {_clip(n.body, MATTER_NOTE_ENTRY_CHARS)}")
+
+    events = list(matter.events or [])
+    if events:
+        lines.append("Timeline:")
+        for e in events[-6:]:
+            status_word = " (done)" if e.done else ""
+            lines.append(f"  - {e.event_date} {e.kind}: {e.title}{status_word}")
+
+    docs = list(matter.documents or [])
+    if docs:
+        names = ", ".join(d.filename for d in docs[:10])
+        lines.append(f"Documents on file: {names}")
+
+    anchors = " ".join(
+        p for p in [
+            matter.description or "",
+            matter.notes or "",
+            " ".join(n.body or "" for n in entries),
+        ] if p
+    )
+
+    return {
+        "id": matter.id,
+        "title": matter.title,
+        "brief": "\n".join(lines),
+        "anchors_text": anchors,
+    }
+
+
+async def _resolve_matter(
+    db: Session, user: models.User, payload_matter_id: int | None
+) -> dict | None:
+    """Validate a matter_id BEFORE any thread is created under it."""
+    if not payload_matter_id:
+        return None
+    return await asyncio.to_thread(_matter_context, db, user, payload_matter_id)
+
+
+async def _matter_for_thread(
+    db: Session, user: models.User, convo: models.Conversation, preloaded: dict | None
+) -> dict | None:
+    """The thread's own matter wins. A follow-up in a matter thread stays
+    scoped to it even if the client forgot to resend the matter_id."""
+    if not convo.matter_id:
+        return None
+    if preloaded and preloaded["id"] == convo.matter_id:
+        return preloaded
+    return await asyncio.to_thread(_matter_context, db, user, convo.matter_id)
+
+
+
 @app.post("/ask", response_model=schemas.AskResponse)
 async def ask(
     payload: schemas.AskRequest,
@@ -505,6 +621,7 @@ async def ask(
         raise HTTPException(status_code=400, detail="Ask a question, or attach a document.")
 
     title_seed = question if not document else f"{document['filename']} — {question}"
+    preloaded_matter = await _resolve_matter(db, current_user, payload.matter_id)
     # to_thread for the same reason as the streamed write below: these are
     # blocking psycopg2 round trips to a remote database inside an async
     # handler, and inline they stall every other request in the process.
@@ -519,8 +636,10 @@ async def ask(
         if payload.conversation_id else []
     )
 
+    matter = await _matter_for_thread(db, current_user, convo, preloaded_matter)
+
     answer = await reasoning.answer_question(
-        question, payload.state or current_user.state, history, document
+        question, payload.state or current_user.state, history, document, matter
     )
     if document:
         answer.document_name = document["filename"]
@@ -556,6 +675,8 @@ async def ask_stream(
     """Same answer as /ask, sent as it is written.
 
     Server-Sent Events. Each line is `data: {"type": ..., ...}`:
+      status   - {stage, detail}: the pipeline step that just started
+                 (search, fetch, analyze, generate, finalize)
       delta    - more body text
       revised  - the validator replaced the body; show this instead
       done     - citations, next steps, grounding, conversation_id
@@ -583,6 +704,7 @@ async def ask_stream(
         raise HTTPException(status_code=400, detail="Ask a question, or attach a document.")
 
     title_seed = question if not document else f"{document['filename']} — {question}"
+    preloaded_matter = await _resolve_matter(db, current_user, payload.matter_id)
     convo = await asyncio.to_thread(
         _get_or_create_conversation,
         db, current_user, payload.conversation_id, title_seed, "ask", payload.matter_id,
@@ -591,6 +713,7 @@ async def ask_stream(
         await asyncio.to_thread(_thread_history, db, convo.id)
         if payload.conversation_id else []
     )
+    matter = await _matter_for_thread(db, current_user, convo, preloaded_matter)
     state = payload.state or current_user.state
     convo_id = convo.id
     # Captured before the generator starts. FastAPI closes the request-scoped
@@ -664,9 +787,12 @@ async def ask_stream(
         log_id = None
         try:
             async for kind, value in reasoning.answer_question_stream(
-                question, state, history, document
+                question, state, history, document, matter
             ):
-                if kind == "delta":
+                if kind == "status":
+                    yield _sse({"type": "status", **value})
+
+                elif kind == "delta":
                     yield _sse({"type": "delta", "text": value})
 
                 elif kind == "revised":
@@ -934,6 +1060,7 @@ def get_conversation(
     return schemas.ConversationDetail(
         id=convo.id, title=convo.title, mode=convo.mode,
         created_at=convo.created_at, turns=turns,
+        matter_id=convo.matter_id,
     )
 
 

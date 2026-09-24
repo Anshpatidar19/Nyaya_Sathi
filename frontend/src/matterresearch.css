@@ -1,0 +1,154 @@
+/* A matter's own Research page (pages/MatterResearch.jsx).
+
+   Built on Ask's layout classes; everything here is the part Ask does not
+   have - the case-file header that says which matter the answers are
+   scoped to, and the picker for papers already filed on the matter. */
+
+/* The page adds a header above Ask's welcome/conversation, so the main
+   column becomes a flex column and those two stop claiming 100% height. */
+.ask-main.mr-main { display: flex; flex-direction: column; }
+.ask-main.mr-main > .ask-welcome,
+.ask-main.mr-main > .ask-conversation { flex: 1; min-height: 0; height: auto; }
+
+.new-chat-btn.mr-back { margin-bottom: 8px; }
+
+/* ---------- which matter this is ---------- */
+
+.mr-context {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding: 12px 28px;
+  border-bottom: 1px solid var(--line);
+  background: var(--surface);
+}
+.mr-context-text {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+.mr-context-label {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: .06em;
+  text-transform: uppercase;
+  color: var(--accent);
+}
+.mr-context-title { font-size: 15px; color: var(--ink); }
+.mr-context-facts { font-size: 13px; color: var(--ink-muted); }
+
+.mr-scope-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 11px;
+  border-radius: 999px;
+  border: 1px solid var(--mint-line);
+  background: var(--mint);
+  color: var(--accent-dark);
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.mr-scope-chip::before {
+  content: '';
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent);
+}
+
+.mr-welcome .ask-welcome-sub { max-width: 620px; }
+
+/* A Draft or Review thread opened here. */
+.mr-readonly {
+  padding: 10px 14px;
+  border: 1px dashed var(--mint-line);
+  border-radius: var(--radius-s);
+  background: var(--accent-soft);
+  color: var(--ink-muted);
+  font-size: 13px;
+}
+
+/* Kind tag in the thread list, for anything that isn't Ask. */
+.mr-mode {
+  display: inline-block;
+  margin-right: 6px;
+  padding: 1px 6px;
+  border-radius: 6px;
+  background: var(--mint);
+  color: var(--accent-dark);
+  font-size: 10.5px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: .04em;
+  vertical-align: 1px;
+}
+
+/* ---------- attaching papers already on the matter ---------- */
+
+.mr-attach { display: flex; align-items: center; gap: 4px; }
+
+.mr-docpick { position: relative; }
+.mr-docpick-btn {
+  border: 1px solid var(--line);
+  background: var(--surface);
+  color: var(--ink-muted);
+  font-family: inherit;
+  font-size: 12.5px;
+  font-weight: 600;
+  padding: 6px 10px;
+  border-radius: 999px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: border-color .15s, color .15s;
+}
+.mr-docpick-btn:hover:not(:disabled) { border-color: var(--accent); color: var(--accent-dark); }
+.mr-docpick-btn:disabled { opacity: .5; cursor: not-allowed; }
+
+/* Opens upward: the composer sits at the bottom of the screen. */
+.mr-docpick-menu {
+  position: absolute;
+  bottom: calc(100% + 6px);
+  left: 0;
+  z-index: 20;
+  width: min(320px, 80vw);
+  max-height: 260px;
+  overflow-y: auto;
+  padding: 6px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-s);
+  background: var(--surface);
+  box-shadow: var(--shadow-strong);
+  text-align: left;
+}
+/* On the welcome card the composer is mid-screen, so open downward. */
+.ask-input-card .mr-docpick-menu { bottom: auto; top: calc(100% + 6px); }
+
+.mr-docpick-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 8px 10px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--ink);
+  font-family: inherit;
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+}
+.mr-docpick-item svg { width: 16px; height: 16px; flex-shrink: 0; color: var(--ink-faint); }
+.mr-docpick-item span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mr-docpick-item:hover,
+.mr-docpick-item.active { background: var(--mint); }
+
+@media (max-width: 900px) {
+  .mr-context { padding: 10px 16px; }
+}

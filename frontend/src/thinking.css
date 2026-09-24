@@ -1,20 +1,13 @@
 /* The answer card while it is still being produced.
 
-   Imported by pages/Ask.jsx so it travels with the thing it styles.
+   Imported by components/StreamingAnswer.jsx so it travels with the thing
+   it styles.
 
    The design rule this follows: every moving part corresponds to something
-   that is actually happening. There are exactly two states, and the app
-   can tell them apart honestly -
-
-     Researching   nothing has streamed yet, so retrieval and the model's
-                   own reasoning are still running
-     Writing       the first token has arrived, so prose is coming
-
-   What is deliberately NOT here is a fake stage ticker cycling through
-   "Searching statutes... Reading judgments... Cross-checking citations".
-   The stream carries no stage events, so those labels would be invented -
-   and a product whose whole argument is that its confidence badge comes
-   from real retrieval signals cannot afford a progress bar that lies.
+   that is actually happening. The stepper advances only on `status` events
+   the backend emits as each pipeline step begins - search, fetch, analyze,
+   generate, finalize - never on a timer. A step the pipeline skipped is
+   skipped here too.
 
    Every animation is disabled under prefers-reduced-motion at the bottom. */
 
@@ -122,6 +115,170 @@
 
 .think-pill.is-writing { background: var(--accent-soft); }
 
+/* ---------- pipeline stepper ---------- */
+
+.think-steps {
+  list-style: none;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin: 2px 0 10px;
+  padding: 0;
+}
+
+.think-step {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px 4px 7px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: var(--surface);
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--ink-faint);
+  transition: background .25s ease, border-color .25s ease, color .25s ease, opacity .25s ease;
+}
+/* The arrow between steps. Drawn with a pseudo-element so the list stays
+   a list for anything that reads it. */
+.think-step + .think-step::before {
+  content: '→';
+  margin: 0 6px 0 -2px;
+  color: var(--ink-faint);
+  font-weight: 400;
+}
+.think-step-icon {
+  display: inline-flex;
+  width: 16px;
+  height: 16px;
+  flex-shrink: 0;
+}
+.think-step-svg { width: 16px; height: 16px; overflow: visible; }
+
+.think-step.is-todo { opacity: .55; }
+
+/* ---------- step icons ----------
+   Static in every state except active. Each animation shows the kind of
+   work the step is doing, and runs only while that work is happening. */
+
+/* Moving parts sit at rest, fully drawn, when not active. */
+.think-step-svg .ic-line,
+.think-step-svg .ic-ink,
+.think-step-svg .ic-ring,
+.think-step-svg .ic-tick { stroke-dasharray: 1; stroke-dashoffset: 0; }
+.think-step-svg .ic-glint { opacity: .6; }
+
+
+/* search - the lens sweeps in a small loop, scanning. */
+.think-step.is-active .ic-lens {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: ic-scan 1.6s ease-in-out infinite;
+}
+@keyframes ic-scan {
+  0%   { transform: translate(0, 0); }
+  25%  { transform: translate(1.2px, -0.8px); }
+  50%  { transform: translate(0, -1.4px); }
+  75%  { transform: translate(-1.2px, -0.8px); }
+  100% { transform: translate(0, 0); }
+}
+.think-step.is-active .ic-glint { animation: ic-glint 1.6s ease-in-out infinite; }
+@keyframes ic-glint {
+  0%, 100% { opacity: .25; }
+  50%      { opacity: 1; }
+}
+
+/* fetch - the page's lines write themselves in, top to bottom. */
+.think-step.is-active .ic-line { animation: ic-write 1.8s ease-in-out infinite; }
+.think-step.is-active .ic-line.l2 { animation-delay: .2s; }
+.think-step.is-active .ic-line.l3 { animation-delay: .4s; }
+@keyframes ic-write {
+  0%        { stroke-dashoffset: 1; }
+  45%, 80%  { stroke-dashoffset: 0; }
+  100%      { stroke-dashoffset: -1; }
+}
+
+/* analyze - the bars of a chart rise and settle in turn. */
+.think-step.is-active .ic-bar {
+  transform-box: fill-box;
+  transform-origin: bottom;
+  animation: ic-bar 1.4s ease-in-out infinite;
+}
+.think-step.is-active .ic-bar.b2 { animation-delay: .18s; }
+.think-step.is-active .ic-bar.b3 { animation-delay: .36s; }
+@keyframes ic-bar {
+  0%, 100% { transform: scaleY(1); }
+  40%      { transform: scaleY(.45); }
+}
+
+/* generate - the pen rocks as it writes a line of ink. */
+.think-step.is-active .ic-pen {
+  transform-box: fill-box;
+  transform-origin: 20% 90%;
+  animation: ic-pen 0.9s ease-in-out infinite;
+}
+@keyframes ic-pen {
+  0%, 100% { transform: rotate(0deg) translateX(0); }
+  50%      { transform: rotate(-7deg) translateX(1px); }
+}
+.think-step.is-active .ic-ink { animation: ic-ink 1.8s linear infinite; }
+@keyframes ic-ink {
+  0%        { stroke-dashoffset: 1; }
+  70%, 85%  { stroke-dashoffset: 0; }
+  100%      { stroke-dashoffset: 0; opacity: 0; }
+}
+
+/* finalize - the ring closes, then the tick draws. */
+.think-step.is-active .ic-ring {
+  transform-box: fill-box;
+  transform-origin: center;
+  transform: rotate(-90deg);
+  animation: ic-ring 1.8s ease-in-out infinite;
+}
+@keyframes ic-ring {
+  0%        { stroke-dashoffset: 1; }
+  55%, 100% { stroke-dashoffset: 0; }
+}
+.think-step.is-active .ic-tick { animation: ic-tick 1.8s ease-in-out infinite; }
+@keyframes ic-tick {
+  0%, 50%   { stroke-dashoffset: 1; }
+  80%, 100% { stroke-dashoffset: 0; }
+}
+
+.think-step.is-done {
+  color: var(--accent-dark);
+  border-color: var(--mint-line);
+  background: var(--accent-soft);
+}
+
+.think-step.is-active {
+  color: var(--accent-dark);
+  border-color: var(--accent);
+  background: var(--mint);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+  animation: think-step-glow 1.6s ease-in-out infinite;
+}
+@keyframes think-step-glow {
+  0%, 100% { box-shadow: 0 0 0 2px var(--accent-soft); }
+  50%      { box-shadow: 0 0 0 5px var(--accent-soft); }
+}
+
+/* The server's own sentence for the current step - "Reading 2 relevant
+   judgments" - so the reader sees what is being done, not a generic verb. */
+.think-detail {
+  margin: 0 0 12px;
+  font-size: 13px;
+  color: var(--ink-muted);
+}
+
+/* Narrow screens: only the active step keeps its words; the rest shrink
+   to their icons so the row still reads as a sequence. */
+@media (max-width: 640px) {
+  .think-step:not(.is-active) .think-step-label { display: none; }
+  .think-step:not(.is-active) { padding: 4px 7px; }
+}
+
 /* ---------- skeleton ----------
    Shown only before the first token. Once prose is streaming the real text
    replaces it, because a skeleton sitting under live text is decoration
@@ -200,8 +357,11 @@
   .think-label,
   .think-skeleton span,
   .think-caret::after,
-  .think-para {
-    animation: none;
+  .think-para,
+  .think-step.is-active,
+  .think-step.is-active .think-step-svg *,
+  .think-step.is-active .think-step-svg {
+    animation: none !important;
   }
   .think-label {
     -webkit-text-fill-color: var(--accent-dark);
