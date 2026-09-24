@@ -308,6 +308,58 @@ class AnswerTranslation(Base):
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
 
 
+class CachedAnswer(Base):
+    """A finished answer, kept so the same question is not paid for twice.
+
+    What this is NOT: a substitute for retrieval or the grounding check. A
+    row only ever holds an answer that already went through the whole
+    pipeline - retrieval, synthesis, the validator - and it is stored with
+    the badge it earned. Serving it again replays that exact answer.
+
+    Why a table rather than the in-process dict in kanoon.py: that one dies
+    with the process, so every restart (and every --reload during
+    development) threw the demo questions back to a cold ten-second answer.
+    This survives restarts and is shared between machines, which is the
+    whole point for a presentation.
+
+    The key is a hash of the normalised question plus the state, computed in
+    answer_cache.py. Only plain first-turn questions are cached - no
+    document, no matter, no follow-up - because anything else depends on
+    context this row does not carry.
+
+    `ask_count` counts how often the question has been asked, `hit_count`
+    how often it was answered from here. Both are for the cache report, not
+    for eviction: judgments and statutes don't change, so rows expire on age
+    alone (ANSWER_CACHE_TTL_DAYS) and pruning is by last use.
+    """
+
+    __tablename__ = "cached_answers"
+
+    id = Column(Integer, primary_key=True, index=True)
+    # sha256 of "question|state" after normalisation. Unique, so two
+    # concurrent writers cannot create two rows for one question.
+    cache_key = Column(String(64), nullable=False, unique=True, index=True)
+    # The question as the user actually typed it, for the report. The key is
+    # computed from a normalised form, so this is never used for matching.
+    question = Column(Text, nullable=False)
+    state = Column(String, nullable=True)
+
+    # The entire AskResponse: title, body, citations (with their Kanoon
+    # links and snippets), next_steps and grounding. Stored whole so a
+    # replay is identical to the original answer, including the sources.
+    payload_json = Column(Text, nullable=False)
+
+    ask_count = Column(Integer, nullable=False, default=1, server_default="1")
+    hit_count = Column(Integer, nullable=False, default=0, server_default="0")
+
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+    # Indexed: pruning deletes the least recently used rows.
+    last_used_at = Column(
+        DateTime, default=datetime.datetime.utcnow,
+        onupdate=datetime.datetime.utcnow, index=True,
+    )
+
+
 # ===========================================================================
 # Advocate discovery, connections and messaging
 # ===========================================================================
