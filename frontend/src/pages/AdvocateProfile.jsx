@@ -243,12 +243,12 @@ export default function AdvocateProfile() {
               )}
 
               {p?.bar_council_number && (
-                <Section title="Enrolment">
+                <Section title="Enrollment">
                   <Field label="Bar Council number">
                     {p.bar_council_number}
                   </Field>
                   <p className="nx-fine">
-                    Enrolment details are as entered by the advocate and are not
+                    Enrollment details are as entered by the advocate and are not
                     verified by Nyaya Sathi.
                   </p>
                 </Section>

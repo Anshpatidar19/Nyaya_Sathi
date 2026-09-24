@@ -9,12 +9,20 @@ Two factors from the original brief are deliberately NOT here:
 
   Verification. There is no verification field. `bar_council_number` is a
   string the advocate typed in themselves, and `User.role` is - by its own
-  comment - never verified. It is scored as "enrolment number on file",
+  comment - never verified. It is scored as "enrollment number on file",
   which is exactly what it is, and the UI must say that too.
 
   Availability. No such field. `is_listed` is a directory on/off switch:
   an unlisted advocate never reaches this module, so it cannot discriminate
   between the ones that do.
+
+Location is not a scored factor either. It used to be 15 points inside
+the total, which meant a strong specialist two cities away could outrank a
+decent one in the user's own city - and the brief now is the opposite:
+nearest first. Location is therefore a separate TIER (location_tier) that
+the caller sorts on before relevance, and the score below is purely "how
+well does this profile fit the matter". The score is used for ordering and
+for the relevance gate only; it is never shown to the user.
 
 Their weight went to the factors that can be evidenced. Everything is in
 WEIGHTS, one dict, so reweighting is a one-line change and real ratings can
@@ -29,7 +37,7 @@ justification after the fact.
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Tuple
 
-# Relevance is worth 60 of the 100 points, split between the broad area and
+# Relevance is worth 70 of the 100 points, split between the broad area and
 # the specific matter. The split is not fixed, because which of the two
 # carries the information depends on what was asked - see weights_for().
 #
@@ -40,13 +48,12 @@ from typing import Any, Dict, List, Optional, Tuple
 # every criminal advocate scores identically on the 40 points that matter
 # most and the query may as well have been the category alone.
 WEIGHTS: Dict[str, int] = {
-    "practice_area": 25,
-    "matter_relevance": 35,
-    "location": 15,
-    "experience": 10,
-    "languages": 5,
-    "completeness": 5,
-    "enrolment": 5,
+    "practice_area": 30,
+    "matter_relevance": 40,
+    "experience": 12,
+    "languages": 6,
+    "completeness": 6,
+    "enrollment": 6,
 }
 
 
@@ -64,9 +71,9 @@ def weights_for(req: "Requirement") -> Dict[str, int]:
     if has_area and has_matter:
         return dict(WEIGHTS)
     if has_area:
-        return {**WEIGHTS, "practice_area": 60, "matter_relevance": 0}
+        return {**WEIGHTS, "practice_area": 70, "matter_relevance": 0}
     if has_matter:
-        return {**WEIGHTS, "practice_area": 0, "matter_relevance": 60}
+        return {**WEIGHTS, "practice_area": 0, "matter_relevance": 70}
     return dict(WEIGHTS)
 
 # Experience stops earning at this point. Past it, more years is not more
@@ -219,23 +226,48 @@ def score_matter_relevance(req: Requirement, prof: Any, user: Any) -> Tuple[floa
     return fraction, detail
 
 
-def score_location(req: Requirement, prof: Any, user: Any) -> Tuple[float, str]:
-    """Exact city beats same state beats elsewhere.
+# Location tiers. Lower sorts first.
+LOCAL_CITY = 0
+SAME_STATE = 1
+ELSEWHERE = 2
 
-    Both city fields are checked: an advocate living in Dewas who practises
-    in Indore is an Indore advocate for this purpose.
+
+def _norm(text: Optional[str]) -> str:
+    return (text or "").strip().lower()
+
+
+def location_tier(
+    city: Optional[str], state: Optional[str], prof: Any, user: Any
+) -> Tuple[int, Optional[str], str]:
+    """(tier, detail sentence, label) for how close this advocate is.
+
+    Exact city beats same state beats elsewhere. Both city fields are
+    checked: an advocate living in Dewas who practises in Indore is an
+    Indore advocate for this purpose.
+
+    With no location at all - none asked for and none on the user's
+    profile - everyone shares one tier and the detail is None, so the card
+    does not claim a proximity that was never measured.
     """
-    here = {(user.city or "").strip().lower(), (prof.practice_city or "").strip().lower()}
+    want_city, want_state = _norm(city), _norm(state)
+    if not want_city and not want_state:
+        return LOCAL_CITY, None, "any"
+
+    here = {_norm(user.city), _norm(prof.practice_city)}
     here.discard("")
 
-    if req.city and req.city.strip().lower() in here:
+    if want_city and want_city in here:
         where = prof.practice_city or user.city
-        return 1.0, f"Practises in {where}"
+        return LOCAL_CITY, f"Practises in {where}", "city"
 
-    if req.state and (user.state or "").strip().lower() == req.state.strip().lower():
-        return 0.45, f"Elsewhere in {user.state}, not in {req.city or 'your city'}"
+    if want_state and _norm(user.state) == want_state:
+        base = user.city or prof.practice_city
+        if base:
+            return SAME_STATE, f"Based in {base}, {user.state}", "state"
+        return SAME_STATE, f"Based in {user.state}", "state"
 
-    return 0.0, f"Based in {user.city or 'another city'}"
+    elsewhere = ", ".join(p for p in [prof.practice_city or user.city, user.state] if p)
+    return ELSEWHERE, f"Based in {elsewhere or 'another state'}", "other"
 
 
 def score_experience(req: Requirement, prof: Any) -> Tuple[float, str]:
@@ -281,13 +313,13 @@ def score_completeness(prof: Any, user: Any) -> Tuple[float, str]:
     return fraction, f"Profile {round(fraction * 100)}% complete"
 
 
-def score_enrolment(prof: Any) -> Tuple[float, str]:
+def score_enrollment(prof: Any) -> Tuple[float, str]:
     """NOT verification. The number is self-entered and nothing checks it
     against the Bar Council roll, so the label says only that it is on
     file."""
     if prof.bar_council_number:
-        return 1.0, "Bar Council enrolment number on file (self-declared)"
-    return 0.0, "No enrolment number on file"
+        return 1.0, "Bar Council enrollment number on file (self-declared)"
+    return 0.0, "No enrollment number on file"
 
 
 # ---------------------------------------------------------------------------
@@ -310,21 +342,19 @@ def score_advocate(req: Requirement, user: Any, prof: Any) -> Dict[str, Any]:
     applicable = {
         "practice_area": weights["practice_area"] > 0,
         "matter_relevance": weights["matter_relevance"] > 0,
-        "location": bool(req.city or req.state),
         "experience": True,
         "languages": bool(req.language),
         "completeness": True,
-        "enrolment": True,
+        "enrollment": True,
     }
 
     raw = [
         ("practice_area", "Practice area", *score_practice_area(req, prof)),
         ("matter_relevance", "Relevant experience", *score_matter_relevance(req, prof, user)),
-        ("location", "Location", *score_location(req, prof, user)),
         ("experience", "Years of practice", *score_experience(req, prof)),
         ("languages", "Language", *score_languages(req, prof)),
         ("completeness", "Profile detail", *score_completeness(prof, user)),
-        ("enrolment", "Enrolment", *score_enrolment(prof)),
+        ("enrollment", "Enrollment", *score_enrollment(prof)),
     ]
 
     factors: List[Factor] = []

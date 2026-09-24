@@ -18,7 +18,7 @@ const ADVOCATE_FIELDS = [
   { key: 'years_experience', label: 'Years of experience', type: 'number', min: 0, max: 70 },
   { key: 'current_firm', label: 'Current firm or chamber', placeholder: 'Verma & Associates' },
   { key: 'practice_city', label: 'City where you practise', placeholder: 'Indore' },
-  { key: 'bar_council_number', label: 'Bar Council enrolment number', placeholder: 'MP/2841/2010' },
+  { key: 'bar_council_number', label: 'Bar Council enrollment number', placeholder: 'MP/2841/2010' },
   { key: 'practice_areas', label: 'Areas of practice', hint: 'Comma separated', placeholder: 'Criminal Law, Bail Matters, Cheque Bounce' },
   { key: 'courts', label: 'Courts you appear in', hint: 'Comma separated', placeholder: 'District Court Indore, MP High Court' },
   { key: 'languages', label: 'Languages', hint: 'Comma separated', placeholder: 'Hindi, English' },

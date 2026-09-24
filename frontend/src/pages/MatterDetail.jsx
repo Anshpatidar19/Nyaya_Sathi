@@ -693,32 +693,47 @@ function Documents({ matter, token, onChange }) {
   );
 }
 
-/* ---------------- Research ---------------- */
+/* ---------------- Research ----------------
+   Research for this matter lives on its own page (MatterResearch), not in
+   the general Ask. Questions asked there are answered against this case
+   file and filed under it, so opening a thread here goes there too. */
+
+const RESEARCH_MODE_LABEL = { ask: 'ask', draft: 'draft', review: 'review', argue: 'arguments' };
 
 function Research({ matter }) {
   const navigate = useNavigate();
+  const base = `/matters/${matter.id}/research`;
+  const threads = matter.research.filter((c) => c.mode !== 'argue');
 
   return (
     <>
       <div className="panel-head standalone">
         <h3>Research on this matter</h3>
+        <button type="button" className="btn btn-primary sm" onClick={() => navigate(base)}>
+          + New research
+        </button>
       </div>
       <p className="page-sub tight">
-        Ask, Draft, Review and Arguments threads filed under this case.
+        Questions asked here are answered against this case file, and stay filed under it.
       </p>
 
-      {matter.research.length === 0 ? (
+      {threads.length === 0 ? (
         <div className="page-empty">
-          <p>Nothing yet. Research started from this matter will appear here.</p>
-          <button type="button" className="btn btn-ghost" onClick={() => navigate('/ask')}>
-            Go to Ask
+          <p>Nothing yet. Start researching this matter — its facts, court and papers are used as context.</p>
+          <button type="button" className="btn btn-ghost" onClick={() => navigate(base)}>
+            Open matter research
           </button>
         </div>
       ) : (
         <div className="doc-list">
-          {matter.research.map((c) => (
-            <button type="button" className="doc-row as-btn" key={c.id} onClick={() => navigate('/ask')}>
-              <span className={`ev-kind k-${c.mode}`}>{c.mode}</span>
+          {threads.map((c) => (
+            <button
+              type="button"
+              className="doc-row as-btn"
+              key={c.id}
+              onClick={() => navigate(`${base}?c=${c.id}`)}
+            >
+              <span className={`ev-kind k-${c.mode}`}>{RESEARCH_MODE_LABEL[c.mode] || c.mode}</span>
               <span className="doc-body">
                 <span className="doc-name">{c.title}</span>
                 <span className="doc-meta">{new Date(c.updated_at).toLocaleDateString()}</span>

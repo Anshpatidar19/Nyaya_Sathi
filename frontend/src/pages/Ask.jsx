@@ -3,6 +3,9 @@ import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useAuth, ACTIVE_CONVERSATION_KEY } from '../AuthContext';
 import { AppNav, AppSidebarUser, AppTopbar } from '../components/AppShell';
 import ArgumentsResult from '../components/ArgumentsResult';
+// The in-flight answer card, with the live pipeline stepper. Shared with a
+// matter's Research page so both read the same status events.
+import StreamingAnswer from '../components/StreamingAnswer';
 import '../thinking.css';
 import ArgumentsSetup from '../components/ArgumentsSetup';
 import DocTypeSelect from '../components/DocTypeSelect';
@@ -125,7 +128,7 @@ const USER_CHIPS = [
   { label: 'Fundamental Rights', fill: 'What are my fundamental rights under the Constitution of India?' },
   { label: 'Filing an FIR', fill: 'How do I file an FIR, and what can I do if the police refuse to register one?' },
   { label: 'Cheque Bounced', fill: 'My cheque bounced — what should I do now?' },
-  { label: 'Landlord & Rent', fill: 'Can my landlord increase my rent or evict me without notice?' },
+  { label: 'Road Accident', fill: 'I was involved in a road accident where the other driver was injured. What legal consequences could I face?' },
   { label: 'Consumer Complaint', fill: 'How do I file a complaint in the consumer forum?' },
   { label: 'Right to Information', fill: 'How do I file an RTI application?' },
   { label: 'Arrest & Bail Basics', fill: 'What are my rights if I am arrested, and how does bail work?' },
@@ -376,7 +379,11 @@ export default function Ask() {
   // The sidebar list scoped to whichever surface is open - a draft thread
   // has no business appearing under "Recents" while you're asking a
   // question, and vice versa.
-  const visibleHistory = history.filter((h) => h.mode === mode);
+  //
+  // Threads filed under a matter are left out: they belong to that case's
+  // own Research page, and showing them here would put one client's
+  // research in the general history next to everything else.
+  const visibleHistory = history.filter((h) => h.mode === mode && !h.matter_id);
   // Draft writes a document from a description; there is nothing to read in.
   const canAttach = mode === 'ask' || mode === 'review' || mode === 'argue';
   // With a file attached, Review needs no typing and Ask needs only a nudge.
@@ -581,6 +588,13 @@ export default function Ask() {
         const replace = (body) =>
           patchLast((turn0) => ({ ...turn0, body, revised: true }));
 
+        // Which pipeline step the server has just started. Drawn by the
+        // stepper in StreamingAnswer; ignored once the turn has settled.
+        const setStatus = (status) =>
+          patchLast((turn0) =>
+            turn0.kind === 'streaming' ? { ...turn0, status } : turn0
+          );
+
         // Render the finished card the moment the payload lands. The
         // validator runs after it server-side, so the promise below does not
         // settle for another second or two - waiting for it would put the
@@ -609,6 +623,7 @@ export default function Ask() {
             document_id: sentFile?.id,
           },
           {
+            onStatus: setStatus,
             onDelta: append,
             onDone: (d) => { settle(d); unlock(); },
             onRevised: replace,
@@ -1001,7 +1016,7 @@ export default function Ask() {
                         <span className="spinner" /> {t.label || 'Thinking through this…'}
                       </div>
                     ) : t.kind === 'streaming' ? (
-                      <StreamingAnswer body={t.body} />
+                      <StreamingAnswer body={t.body} status={t.status} />
                     ) : t.kind === 'rejected' ? (
                       <div className="ask-rejection">{t.message}</div>
                     ) : (
@@ -1121,78 +1136,6 @@ function Grounding({ data }) {
   );
 }
 
-/* The answer mid-flight.
-
-   Citations, next steps and the grounding badge stay absent until the
-   answer is finished and validated - showing placeholders for them would
-   be a lie, and that has not changed.
-
-   What HAS changed is the wait itself. The old version was a spinner and
-   the word "Writing" over an empty card, which was wrong twice: nothing
-   was being written yet, and there was nothing to look at for the several
-   seconds retrieval takes.
-
-   There are two real states here and the client can tell them apart
-   without any new plumbing:
-
-     no text yet   retrieval and the model's reasoning are still running
-                   -> "Researching", over a skeleton of the answer to come
-     text arriving -> "Writing", skeleton gone, caret on the live edge
-
-   The distinction is honest: the first token IS the moment generation
-   starts producing. What this deliberately does not do is cycle through
-   invented stages - "Searching statutes... Checking judgments..." - since
-   the stream carries no stage events and this product's whole claim is
-   that its signals are real. If those stages are ever emitted over SSE,
-   this is where they would render, and then they would be true. */
-function StreamingAnswer({ body }) {
-  const text = body || '';
-  const writing = text.trim().length > 0;
-  const paragraphs = text.split(/\n{2,}/);
-
-  return (
-    <div className="demo-card think-card">
-      <span className="think-rail" aria-hidden="true" />
-
-      <div className="demo-topbar">
-        <div className="demo-brand"><span className="sq">न्या</span> Research</div>
-        <span className={`think-pill${writing ? ' is-writing' : ''}`}>
-          <span className="think-orb" aria-hidden="true" />
-          <span className="think-label">{writing ? 'Writing' : 'Researching'}</span>
-        </span>
-      </div>
-
-      {writing ? (
-        paragraphs.map((p, i) => (
-          <p
-            className={`answer-body think-para${
-              i === paragraphs.length - 1 ? ' think-caret' : ''
-            }`}
-            key={i}
-          >
-            {p}
-          </p>
-        ))
-      ) : (
-        <div className="think-skeleton" aria-hidden="true">
-          <span style={{ width: '94%' }} />
-          <span style={{ width: '99%' }} />
-          <span style={{ width: '72%' }} />
-          <span className="think-gap" />
-          <span style={{ width: '88%' }} />
-          <span style={{ width: '61%' }} />
-        </div>
-      )}
-
-      {/* None of the above exists for a screen reader, so the state is
-          announced once per change rather than on every token. */}
-      <p className="think-sr" role="status" aria-live="polite">
-        {writing ? 'Writing the answer' : 'Researching sources'}
-      </p>
-    </div>
-  );
-}
-
 /* The languages the answer can be rendered in. The interface itself stays in
    English throughout - this switches the generated prose only, which is the
    part the reader actually needs in their own language. Act names and section
@@ -1230,7 +1173,7 @@ function LanguageBar({ active, busy, onPick }) {
   );
 }
 
-function AskResult({ data, token }) {
+export function AskResult({ data, token }) {
   const [lang, setLang] = useState('en');
   const [busy, setBusy] = useState(false);
   const [failed, setFailed] = useState('');
@@ -1306,7 +1249,7 @@ function AskResult({ data, token }) {
   );
 }
 
-function DraftResult({ data, onCopy, copied, token }) {
+export function DraftResult({ data, onCopy, copied, token }) {
   const [lang, setLang] = useState('en');
   const [busy, setBusy] = useState(false);
   const [failed, setFailed] = useState('');
@@ -1412,7 +1355,7 @@ function DraftResult({ data, onCopy, copied, token }) {
   );
 }
 
-function ReviewResult({ data }) {
+export function ReviewResult({ data }) {
   const counts = (data.flags || []).reduce((a, f) => ({ ...a, [f.severity]: (a[f.severity] || 0) + 1 }), {});
   return (
     <div className="demo-card">

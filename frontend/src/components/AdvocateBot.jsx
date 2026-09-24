@@ -8,15 +8,15 @@
 
    Two rules this component exists to keep:
 
-   1. Nothing here invents a ranking or a reason. The score and every
+   1. Nothing here invents a ranking or a reason. The order and every
       "why" line arrive from the server, computed in advocate_match.py
       from real profile fields. This file only draws them.
 
-   2. The score is labelled a MATCH score everywhere it appears, and the
-      panel says what it is made of. It is not a rating, there are no
-      stars, and no advocate is called "best" - the directory has no
-      ratings data and pretending otherwise would be the one genuinely
-      dishonest thing this feature could do.
+   2. No number is shown. Advocates are ordered nearest first - the
+      user's city, then their state, then elsewhere - and by how well the
+      profile fits the matter within each of those. A visible score read
+      as a rating, and the directory has no ratings data; there are no
+      stars, and no advocate is called "best".
 
    Connect and View profile reuse the page's existing handlers, so a
    connection started from the assistant is the same connection, with the
@@ -179,7 +179,7 @@ export default function AdvocateBot({ token, onViewProfile, onConnect }) {
         <JusticeMark height={54} decorative className="ab-mark" />
         <div className="ab-head-text">
           <strong>Find an Advocate</strong>
-          <span>Matched on profile information, not ratings</span>
+          <span>Nearest advocates first, matched on their profile</span>
         </div>
         {!!turns.length && (
           <button
@@ -242,10 +242,11 @@ export default function AdvocateBot({ token, onViewProfile, onConnect }) {
 
               {turn.kind === 'matches' && !!turn.items?.length && (
                 <p className="ab-fineprint">
-                  Match scores are computed from practice area, relevant
-                  experience, location, years in practice, language, profile
-                  detail and whether an enrolment number is on file. They are
-                  not user ratings, reviews or case outcomes.
+                  Advocates in your city come first, then elsewhere in your
+                  state, then the rest. Within each, they are ordered by how
+                  closely their profile fits your matter - practice area,
+                  relevant experience, years in practice and language. This is
+                  not a rating: no reviews or case outcomes are used.
                 </p>
               )}
             </div>
@@ -304,10 +305,15 @@ export default function AdvocateBot({ token, onViewProfile, onConnect }) {
    bounce" lets someone correct it in one message instead of wondering why
    the results look odd. */
 function Understood({ understood }) {
+  const place = understood.city || understood.state;
   const bits = [
     understood.practice_area,
     ...(understood.matter_keywords || []),
-    understood.city,
+    place
+      ? understood.location_source === 'profile'
+        ? `${place} (your location)`
+        : place
+      : null,
     understood.language,
     understood.min_experience ? `${understood.min_experience}+ years` : null,
   ].filter(Boolean);
@@ -326,8 +332,7 @@ function Understood({ understood }) {
 }
 
 function AdvocateResult({ item, onViewProfile, onConnect }) {
-  const [showFactors, setShowFactors] = useState(false);
-  const { card, score, reasons, factors } = item;
+  const { card, reasons = [], location_match: near } = item;
   const connected = card.connection?.status === 'accepted';
 
   return (
@@ -350,7 +355,7 @@ function AdvocateResult({ item, onViewProfile, onConnect }) {
             )}
           </div>
         </div>
-        <ScoreDial score={score} />
+        {near === 'city' && <span className="ab-near">Near you</span>}
       </div>
 
       {!!reasons.length && (
@@ -362,32 +367,6 @@ function AdvocateResult({ item, onViewProfile, onConnect }) {
       )}
 
       <Chips value={card.practice_areas} max={3} />
-
-      <button
-        type="button"
-        className="ab-breakdown-toggle"
-        onClick={() => setShowFactors((s) => !s)}
-        aria-expanded={showFactors}
-      >
-        {showFactors ? 'Hide score breakdown' : 'How this score was calculated'}
-      </button>
-
-      {showFactors && (
-        <ul className="ab-factors">
-          {factors.map((f) => (
-            <li key={f.key}>
-              <span className="ab-f-label">{f.label}</span>
-              <span className="ab-f-bar" aria-hidden="true">
-                <span style={{ width: `${(f.points / f.max_points) * 100}%` }} />
-              </span>
-              <span className="ab-f-pts">
-                {f.points}/{f.max_points}
-              </span>
-              <span className="ab-f-detail">{f.detail}</span>
-            </li>
-          ))}
-        </ul>
-      )}
 
       <div className="ab-actions">
         <button
@@ -406,31 +385,5 @@ function AdvocateResult({ item, onViewProfile, onConnect }) {
         </button>
       </div>
     </article>
-  );
-}
-
-/* A ring, not stars. Stars are the visual language of ratings, and this is
-   not one - the shape has to say "score out of 100" at a glance. */
-function ScoreDial({ score }) {
-  const r = 17;
-  const circumference = 2 * Math.PI * r;
-  const filled = (Math.max(0, Math.min(100, score)) / 100) * circumference;
-
-  return (
-    <div className="ab-dial" title={`Match score ${score} out of 100`}>
-      <svg viewBox="0 0 44 44" aria-hidden="true">
-        <circle cx="22" cy="22" r={r} className="ab-dial-track" />
-        <circle
-          cx="22"
-          cy="22"
-          r={r}
-          className="ab-dial-fill"
-          strokeDasharray={`${filled} ${circumference}`}
-          transform="rotate(-90 22 22)"
-        />
-      </svg>
-      <span className="ab-dial-num">{score}</span>
-      <span className="ab-dial-cap">match</span>
-    </div>
   );
 }

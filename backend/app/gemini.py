@@ -51,6 +51,22 @@ from .config import settings
 logger = logging.getLogger(__name__)
 
 GEMINI_TIMEOUT = 90.0
+
+# Streaming stall detection. A healthy stream sends its first chunk within a
+# few seconds and then keeps coming; a stream that goes quiet has stalled
+# (Gemini under load), and waiting it out only moves the failure later.
+#
+#   FIRST_CHUNK_TIMEOUT  - longest wait for the first chunk: prompt prefill
+#                          plus the model's (minimal) thinking
+#   CHUNK_GAP_TIMEOUT    - longest silence allowed once text is flowing
+#
+# Enforced by a watchdog in _gemini_stream_raw. A stall goes straight to
+# Groq with no Gemini retry: a model that just stalled for 25s usually
+# stalls again, and the retry was what turned one stall into three minutes.
+# httpx's own read timeout stays as a looser backstop.
+FIRST_CHUNK_TIMEOUT = 25.0
+CHUNK_GAP_TIMEOUT = 20.0
+GEMINI_STREAM_TIMEOUT = httpx.Timeout(GEMINI_TIMEOUT, read=60.0)
 GEMINI_BASE = "https://generativelanguage.googleapis.com/v1beta"
 
 # How much of an attached document is sent for explanation. Long enough for
@@ -92,6 +108,12 @@ class GeminiUnavailable(GeminiError):
     in the app still catches it, so if the fallback is off or fails, callers
     behave exactly as they did before this existed.
     """
+
+
+class GeminiStalled(GeminiUnavailable):
+    """Gemini accepted the request and then went silent (a read timeout or
+    the stream watchdog). Handled like a 503, except it is NOT retried on
+    Gemini - it goes straight to the fallback."""
 
 
 class GeminiQuotaExceeded(GeminiError):
@@ -200,6 +222,48 @@ def _retry_hint(text: str) -> Tuple[Optional[float], bool]:
             except ValueError:
                 pass
     return delay, per_day
+
+
+def _network_error(exc: BaseException, where: str) -> GeminiUnavailable:
+    """A timeout or dropped connection, reported as the 503 it effectively is.
+
+    httpx raises its own exceptions (ReadTimeout, ConnectError,
+    RemoteProtocolError...) which are not GeminiErrors, so they used to
+    skip the retry and the Groq fallback entirely and fail the answer with
+    "Unexpected streaming synthesis error". Wrapped here so every existing
+    503 path handles them. A timeout is a stall (no Gemini retry); a
+    dropped or refused connection is an ordinary 503 (one retry).
+    """
+    cls = GeminiStalled if isinstance(exc, httpx.TimeoutException) else GeminiUnavailable
+    return cls(
+        f"Gemini API error 503: {type(exc).__name__} on {where} "
+        f"(no response from the model - treated as unavailable)",
+        status_code=503,
+    )
+
+
+def _thinking_config(model_name: str, budget: Optional[int]) -> Dict[str, Any]:
+    """Thinking control in the form this model actually understands.
+
+    Gemini 3.x replaced the numeric thinkingBudget with thinkingLevel. The
+    old field is still accepted for backward compatibility, but Gemini 3
+    Flash-Lite cannot switch thinking fully off, so a budget of 0 is not a
+    reliable "don't think" - and an unset level can default to HIGH, which
+    is seconds of silent reasoning before the first streamed word. Sending
+    the level explicitly makes the latency predictable. 2.x models keep the
+    budget, which they do honour.
+    """
+    if (model_name or "").lower().startswith("gemini-3"):
+        if budget is None or budget <= 0:
+            level = "minimal"
+        elif budget <= 2048:
+            level = "low"
+        elif budget <= 8192:
+            level = "medium"
+        else:
+            level = "high"
+        return {"thinkingLevel": level}
+    return {"thinkingBudget": budget}
 
 
 def _api_error(status: int, detail: Any) -> GeminiError:
@@ -415,7 +479,7 @@ async def _gemini_generate_raw(
         "responseMimeType": "application/json",
     }
     if thinking_budget is not None:
-        generation_config["thinkingConfig"] = {"thinkingBudget": thinking_budget}
+        generation_config["thinkingConfig"] = _thinking_config(model_name, thinking_budget)
 
     payload: Dict[str, Any] = {
         "systemInstruction": {"parts": [{"text": system_instruction}]},
@@ -424,19 +488,24 @@ async def _gemini_generate_raw(
     }
 
     client = _get_client()
-    resp = await client.post(url, json=payload, headers=_auth_headers())
+    try:
+        resp = await client.post(url, json=payload, headers=_auth_headers())
 
-    # Not every model in the family accepts thinkingConfig. If that is
-    # what it objected to, drop the field and go again rather than
-    # failing the whole request over a knob.
-    if resp.status_code == 400 and "thinkingConfig" in generation_config:
-        if "thinking" in resp.text.lower():
-            logger.warning(
-                "Model %s rejected thinkingConfig; retrying without it.",
-                model_name,
-            )
-            generation_config.pop("thinkingConfig")
-            resp = await client.post(url, json=payload, headers=_auth_headers())
+        # Not every model in the family accepts thinkingConfig. If that is
+        # what it objected to, drop the field and go again rather than
+        # failing the whole request over a knob.
+        if resp.status_code == 400 and "thinkingConfig" in generation_config:
+            if "thinking" in resp.text.lower():
+                logger.warning(
+                    "Model %s rejected thinkingConfig; retrying without it.",
+                    model_name,
+                )
+                generation_config.pop("thinkingConfig")
+                resp = await client.post(url, json=payload, headers=_auth_headers())
+    except httpx.TransportError as exc:
+        # TransportError covers every timeout (ReadTimeout, ConnectTimeout,
+        # ...) plus dropped and refused connections.
+        raise _network_error(exc, "request") from exc
 
     if resp.status_code >= 400:
         raise _api_error(resp.status_code, resp.text)
@@ -565,6 +634,9 @@ async def _generate_raw(
             if not is_gemini_503_error(exc):
                 raise
             unavailable = exc
+            if isinstance(exc, GeminiStalled):
+                logger.warning("Gemini stalled (%s) - skipping retry", exc)
+                break
             if attempt == 0:
                 logger.warning("Gemini returned 503 - retrying")
 
@@ -572,14 +644,14 @@ async def _generate_raw(
     if media:
         # Groq's text models cannot read inline PDFs or images, so an OCR
         # call has nowhere to go. Fail it the way it always failed.
-        logger.warning("Gemini retry returned 503 on a document/image call - "
+        logger.warning("Gemini unavailable on a document/image call - "
                        "no text-only fallback possible")
         raise unavailable
     if not _fallback_ready():
-        logger.warning("Gemini retry returned 503 - Groq fallback is disabled")
+        logger.warning("Gemini unavailable - Groq fallback is disabled")
         raise unavailable
 
-    logger.warning("Gemini retry returned 503 - switching to Groq fallback (model=%s)",
+    logger.warning("Gemini unavailable - switching to Groq fallback (model=%s)",
                    settings.groq_model)
     return await _groq_complete(call, unavailable)
 
@@ -839,7 +911,9 @@ async def _gemini_stream_raw(
         "responseMimeType": "application/json",
     }
     if thinking_budget is not None:
-        generation_config["thinkingConfig"] = {"thinkingBudget": thinking_budget}
+        generation_config["thinkingConfig"] = _thinking_config(
+            settings.gemini_model, thinking_budget
+        )
 
     payload: Dict[str, Any] = {
         "systemInstruction": {"parts": [{"text": system_instruction}]},
@@ -850,55 +924,121 @@ async def _gemini_stream_raw(
     buf = ""            # raw JSON accumulated so far
     emitted = 0         # characters of body already sent
     finish_reason = "UNKNOWN"
+    usage: Dict[str, Any] = {}
+    started = time.perf_counter()
+    first_chunk_at: Optional[float] = None
 
     client = _get_client()
-    async with client.stream(
-        "POST",
-        url,
-        params={"alt": "sse"},
-        json=payload,
-        headers=_auth_headers(),
-    ) as resp:
-        if resp.status_code >= 400:
-            raise _api_error(resp.status_code, await resp.aread())
 
-        async for line in resp.aiter_lines():
-            if not line.startswith("data:"):
-                continue
-            chunk = line[5:].strip()
-            if not chunk or chunk == "[DONE]":
-                continue
-            try:
-                obj = json.loads(chunk)
-            except json.JSONDecodeError:
-                continue
+    def _open():
+        return client.stream(
+            "POST",
+            url,
+            params={"alt": "sse"},
+            json=payload,
+            headers=_auth_headers(),
+            timeout=GEMINI_STREAM_TIMEOUT,
+        )
 
-            # An overload can also arrive AFTER the 200, as an error object
-            # inside the stream. It used to be skipped here, which left a
-            # half-written answer to fail JSON parsing with a misleading
-            # message. Raised now, with its real status.
-            if isinstance(obj, dict) and obj.get("error"):
-                err = obj["error"] if isinstance(obj["error"], dict) else {}
-                raise _api_error(int(err.get("code") or 500), json.dumps(err))
+    try:
+        for try_without_thinking in (False, True):
+            async with _open() as resp:
+                if resp.status_code >= 400:
+                    body = await resp.aread()
+                    # Same courtesy as the non-streaming call: a model that
+                    # rejects the thinking field gets the request again
+                    # without it, instead of failing the answer over a knob.
+                    if (
+                        resp.status_code == 400
+                        and not try_without_thinking
+                        and "thinkingConfig" in generation_config
+                        and b"thinking" in body.lower()
+                    ):
+                        logger.warning(
+                            "Model %s rejected %s; streaming again without it.",
+                            settings.gemini_model, generation_config["thinkingConfig"],
+                        )
+                        generation_config.pop("thinkingConfig")
+                        continue
+                    raise _api_error(resp.status_code, body)
 
-            try:
-                candidate = obj["candidates"][0]
-            except (KeyError, IndexError):
-                continue
+                lines = resp.aiter_lines()
+                while True:
+                    # The watchdog. Waiting on one line at a time with a
+                    # deadline is what turns "Gemini went quiet" into a
+                    # GeminiStalled in 20-25s instead of a raw ReadTimeout
+                    # after 90.
+                    deadline = FIRST_CHUNK_TIMEOUT if first_chunk_at is None else CHUNK_GAP_TIMEOUT
+                    try:
+                        line = await asyncio.wait_for(lines.__anext__(), timeout=deadline)
+                    except StopAsyncIteration:
+                        break
+                    except asyncio.TimeoutError:
+                        phase = (
+                            f"stream: no first chunk in {FIRST_CHUNK_TIMEOUT:.0f}s"
+                            if first_chunk_at is None
+                            else f"stream: silent {CHUNK_GAP_TIMEOUT:.0f}s after {emitted} body chars"
+                        )
+                        raise GeminiStalled(
+                            f"Gemini API error 503: stalled ({phase})", status_code=503
+                        )
 
-            finish_reason = str(candidate.get("finishReason") or finish_reason)
-            buf += _extract_text(candidate, strip=False)
+                    if not line.startswith("data:"):
+                        continue
+                    chunk = line[5:].strip()
+                    if not chunk or chunk == "[DONE]":
+                        continue
+                    try:
+                        obj = json.loads(chunk)
+                    except json.JSONDecodeError:
+                        continue
+                    if first_chunk_at is None:
+                        first_chunk_at = time.perf_counter()
 
-            body_so_far = _partial_body(buf)
-            if len(body_so_far) > emitted:
-                yield "delta", body_so_far[emitted:]
-                emitted = len(body_so_far)
+                    # An overload can also arrive AFTER the 200, as an error
+                    # object inside the stream. Raised with its real status.
+                    if isinstance(obj, dict) and obj.get("error"):
+                        err = obj["error"] if isinstance(obj["error"], dict) else {}
+                        raise _api_error(int(err.get("code") or 500), json.dumps(err))
 
-            if midstream and emitted > 0:
-                fake = _simulated_failure(attempt)
-                if fake:
-                    raise fake
+                    if isinstance(obj, dict) and obj.get("usageMetadata"):
+                        usage = obj["usageMetadata"]
 
+                    try:
+                        candidate = obj["candidates"][0]
+                    except (KeyError, IndexError):
+                        continue
+
+                    finish_reason = str(candidate.get("finishReason") or finish_reason)
+                    buf += _extract_text(candidate, strip=False)
+
+                    body_so_far = _partial_body(buf)
+                    if len(body_so_far) > emitted:
+                        yield "delta", body_so_far[emitted:]
+                        emitted = len(body_so_far)
+
+                    if midstream and emitted > 0:
+                        fake = _simulated_failure(attempt)
+                        if fake:
+                            raise fake
+            break
+    except httpx.TransportError as exc:
+        # Backstop for anything the watchdog did not catch: a dropped
+        # connection, or httpx's own read timeout.
+        where = "stream (after %d body chars)" % emitted if emitted else "stream (before any output)"
+        raise _network_error(exc, where) from exc
+
+    # First-chunk time and thought tokens are the two numbers that explain a
+    # slow answer: a high first-chunk time with thoughts > 0 means the model
+    # is reasoning silently before it writes.
+    logger.info(
+        "GEMINI stream first_chunk=%.2fs total=%.2fs in=%s out=%s thoughts=%s",
+        (first_chunk_at - started) if first_chunk_at else -1.0,
+        time.perf_counter() - started,
+        usage.get("promptTokenCount"),
+        usage.get("candidatesTokenCount"),
+        usage.get("thoughtsTokenCount", 0),
+    )
     logger.info("GEMINI stream chars=%d finish=%s", len(buf), finish_reason)
     yield "raw", (buf.strip(), finish_reason)
 
@@ -1000,9 +1140,17 @@ async def _stream_raw(
                     yield "reset", None
                 if quota:
                     break                            # no Gemini retry on a 429
+                if isinstance(exc, GeminiStalled):
+                    # A stall is not retried - see FIRST_CHUNK_TIMEOUT.
+                    logger.warning("Gemini stalled%s (%s) - skipping retry",
+                                   " mid-stream" if streamed else "", exc)
+                    if not _fallback_ready():
+                        logger.warning("Groq fallback is disabled")
+                        raise
+                    break
                 if attempt == 0:
-                    logger.warning("Gemini returned 503%s - retrying",
-                                   " mid-stream" if streamed else "")
+                    logger.warning("Gemini unavailable%s (%s) - retrying",
+                                   " mid-stream" if streamed else "", exc)
         else:
             # Both attempts were 503s (the loop did not break on a 429).
             if not _fallback_ready():
@@ -1012,6 +1160,8 @@ async def _stream_raw(
                            settings.groq_model)
 
     assert failure is not None
+    if isinstance(failure, GeminiStalled):
+        logger.warning("Switching to Groq fallback after a stall (model=%s)", settings.groq_model)
     try:
         async for kind, value in _groq_stream_raw(**call):
             if kind == "delta" and silent:
@@ -1075,6 +1225,13 @@ paperwork, what the SOURCES say is the law. Never state a legal rule that only t
 document asserts - a notice claiming a section says something is not evidence that \
 it does. If the document and the retrieved law disagree, say so.
 
+- If a MATTER CONTEXT is supplied, the question comes from the advocate handling \
+that case, inside its case file. Answer for that matter: apply the retrieved law to \
+its facts, court and the side the advocate appears for, wherever the sources support \
+it. The matter context is facts about the case, never a source of law - do not cite \
+it, and do not state a legal rule because the case file mentions it. Keep act names \
+and section numbers exactly as the sources give them.
+
 Return ONLY a JSON object with this exact shape:
 {
   "title": "a short direct answer, max 10 words, no trailing period",
@@ -1084,12 +1241,25 @@ Return ONLY a JSON object with this exact shape:
 }"""
 
 
+def _matter_block(matter: Optional[Dict[str, Any]]) -> str:
+    """The case file, as the model sees it. Empty outside a matter."""
+    if not matter or not matter.get("brief"):
+        return ""
+    return (
+        "MATTER CONTEXT (the advocate's own case file - facts about the case, "
+        "not law):\n-----\n"
+        f"{matter['brief']}\n"
+        "-----\n\n"
+    )
+
+
 def _synthesis_prompt(
     question: str,
     state: Optional[str],
     sources: List[Dict[str, Any]],
     history: Optional[List[Dict[str, str]]] = None,
     document: Optional[Dict[str, str]] = None,
+    matter: Optional[Dict[str, Any]] = None,
 ) -> str:
     """Build the synthesis prompt.
 
@@ -1134,6 +1304,7 @@ def _synthesis_prompt(
         )
 
     return (
+        f"{_matter_block(matter)}"
         f"{prior}"
         f"{attached}"
         f"USER QUESTION: {question}{location}\n\n"
@@ -1168,10 +1339,11 @@ async def synthesize(
     sources: List[Dict[str, Any]],
     history: Optional[List[Dict[str, str]]] = None,
     document: Optional[Dict[str, str]] = None,
+    matter: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """Turn retrieved material into a plain-language answer."""
     data = await generate_json(
-        _synthesis_prompt(question, state, sources, history, document),
+        _synthesis_prompt(question, state, sources, history, document, matter),
         _SYNTHESIS_SYSTEM,
         temperature=0.25,
         max_output_tokens=_synthesis_tokens(document),
@@ -1185,6 +1357,7 @@ async def synthesize_stream(
     sources: List[Dict[str, Any]],
     history: Optional[List[Dict[str, str]]] = None,
     document: Optional[Dict[str, str]] = None,
+    matter: Optional[Dict[str, Any]] = None,
 ) -> AsyncIterator[Tuple[str, Any]]:
     """Same answer as synthesize(), delivered as it is written.
 
@@ -1203,7 +1376,7 @@ async def synthesize_stream(
     reset = False
 
     async for kind, value in _stream_raw(
-        _synthesis_prompt(question, state, sources, history, document),
+        _synthesis_prompt(question, state, sources, history, document, matter),
         _SYNTHESIS_SYSTEM,
         temperature=0.25,
         max_output_tokens=_synthesis_tokens(document),
@@ -1252,6 +1425,11 @@ merely because the excerpts do not mention it. Apply rules 1 and 2 to the BODY.
 
 The user's own state is supplied to you below when it is known. It is a fact about \
 the user, not something the draft invented. Never flag the draft for naming it.
+
+A MATTER CONTEXT may also be supplied: the advocate's own case file. Its facts - the \
+parties, the court, the side, what happened - are supplied facts, not inventions. \
+Never flag the draft for restating or applying them. Rule 1 still applies to any \
+statement of LAW, which must come from the source excerpts.
 
 What rule 2 is actually for: predicting that the user will win or lose, telling them \
 what to plead, or asserting that a provision applies to their facts when the sources \
@@ -1321,6 +1499,7 @@ async def validate(
     draft: Dict[str, Any],
     sources: List[Dict[str, Any]],
     state: Optional[str] = None,
+    matter: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     # Index order is preserved on purpose: the numbers the draft cites in
     # used_sources have to keep pointing at the same sources here.
@@ -1346,6 +1525,7 @@ async def validate(
 
     prompt = (
         f"{location}"
+        f"{_matter_block(matter)}"
         f"USER QUESTION: {question}\n\n"
         f"SOURCE EXCERPTS:\n\n" + "\n\n".join(blocks) + "\n\n"
         f"DRAFT ANSWER:\nTitle: {draft.get('title')}\nBody: {draft.get('body')}\n"

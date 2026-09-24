@@ -7,9 +7,18 @@ pipeline is deliberately split so the model never touches the ranking:
 
     question
       -> Gemini parses it into a Requirement (area, matter, city, language)
+      -> no city/state in the question? the user's own profile location
+         stands in, so "a property lawyer" means one near them
       -> that drives the SAME directory query the search page uses
-      -> advocate_match scores the candidates in Python
-      -> the reply sentence is a template over the scores
+      -> advocate_match ranks the candidates in Python: nearest first
+         (same city, then same state, then elsewhere), and within each
+         tier by how closely the profile fits the matter
+      -> the reply sentence is a template over that ranking
+
+No number is shown to the user. The internal relevance score still orders
+advocates inside a location tier and still gates out profiles that say
+nothing about the matter, but a visible "87 match" invited exactly the
+"rating" reading the product cannot back up, so cards carry reasons only.
 
 The model's only job is understanding the sentence. It does not choose who
 ranks where and it does not write the justification, because a generated
@@ -39,7 +48,7 @@ from .database import get_db
 # The card shape, the connection-state helper and the avatar/user mapper
 # already exist for the search page. Re-declaring them here would mean two
 # card shapes drifting apart, so the bot returns exactly what the grid
-# returns, plus the score.
+# returns, plus the reasons.
 from .network_api import AdvocateCard, _card, _short, _state
 
 logger = logging.getLogger(__name__)
@@ -79,19 +88,12 @@ class RecommendIn(BaseModel):
     history: List[BotTurn] = []
 
 
-class FactorOut(BaseModel):
-    key: str
-    label: str
-    detail: str
-    points: float
-    max_points: int
-
-
 class ScoredAdvocate(BaseModel):
     card: AdvocateCard
-    score: int
+    # "city" | "state" | "other" | "any" - how close they are to the
+    # location being searched. The UI shows a small "Near you" tag on city.
+    location_match: str = "any"
     reasons: List[str] = []
-    factors: List[FactorOut] = []
 
 
 class RecommendOut(BaseModel):
@@ -187,14 +189,7 @@ async def parse_requirement(message: str, history: List[BotTurn]) -> Requirement
 # Candidates
 # ---------------------------------------------------------------------------
 
-def _candidates(db: Session, req: Requirement, city_filter: bool) -> List:
-    """The directory, filtered only where a filter cannot wrongly exclude.
-
-    City is the one safe narrowing - someone asking for an advocate in
-    Indore does not want Chennai - and even that is dropped and retried if
-    it empties the list. Practice area is never a WHERE clause; that is the
-    scorer's job.
-    """
+def _base_query(db: Session, req: Requirement):
     query = (
         db.query(models.User, models.AdvocateProfile)
         .join(
@@ -206,22 +201,55 @@ def _candidates(db: Session, req: Requirement, city_filter: bool) -> List:
             models.AdvocateProfile.is_listed.is_(True),
         )
     )
-
-    if city_filter and req.city:
-        like = f"%{req.city.strip()}%"
-        query = query.filter(
-            or_(
-                models.User.city.ilike(like),
-                models.AdvocateProfile.practice_city.ilike(like),
-            )
-        )
-
     if req.min_experience is not None:
         query = query.filter(
             models.AdvocateProfile.years_experience >= req.min_experience
         )
+    return query
 
-    return query.limit(MAX_CANDIDATES).all()
+
+def _candidates(db: Session, req: Requirement) -> List:
+    """The directory, local advocates guaranteed a place in the pool.
+
+    Nothing is a hard filter any more - an Indore request still sees
+    Bhopal and Chennai, just ranked after Indore. But the pool is capped,
+    so the city and state slices are pulled first: at a few thousand
+    advocates a plain LIMIT would otherwise drop the very people the
+    ranking is meant to put on top. Practice area is never a WHERE clause;
+    that is the scorer's job.
+    """
+    pools = []
+    if req.city:
+        like = f"%{req.city.strip()}%"
+        pools.append(
+            _base_query(db, req)
+            .filter(
+                or_(
+                    models.User.city.ilike(like),
+                    models.AdvocateProfile.practice_city.ilike(like),
+                )
+            )
+            .limit(MAX_CANDIDATES)
+            .all()
+        )
+    if req.state:
+        pools.append(
+            _base_query(db, req)
+            .filter(models.User.state.ilike(req.state.strip()))
+            .limit(MAX_CANDIDATES)
+            .all()
+        )
+    pools.append(_base_query(db, req).limit(MAX_CANDIDATES).all())
+
+    seen = set()
+    rows = []
+    for pool in pools:
+        for user, prof in pool:
+            if user.id in seen:
+                continue
+            seen.add(user.id)
+            rows.append((user, prof))
+    return rows[: MAX_CANDIDATES * 2]
 
 
 def _connections(db: Session, viewer_id: int, other_ids: List[int]) -> Dict[int, Any]:
@@ -253,10 +281,16 @@ def _connections(db: Session, viewer_id: int, other_ids: List[int]) -> Dict[int,
 # ---------------------------------------------------------------------------
 
 # Templates, not generated text. This is the load-bearing decision in the
-# whole feature: the score is presented as a match score computed from
-# profile fields, and it cannot drift into "top rated" because no model is
-# writing this sentence.
-def _reply_line(req: Requirement, count: int, widened: bool, thin: bool = False) -> str:
+# whole feature: the ranking is described as location first, then profile
+# fit, and it cannot drift into "top rated" because no model is writing
+# this sentence.
+def _reply_line(
+    req: Requirement,
+    count: int,
+    widened: bool,
+    thin: bool = False,
+    from_profile: bool = False,
+) -> str:
     # Name the SPECIFIC matter, not the broad area. The area is usually
     # inferred by the parser; the matter is what the person actually said,
     # and echoing the inference back ("matches for Criminal Law" when they
@@ -267,29 +301,46 @@ def _reply_line(req: Requirement, count: int, widened: bool, thin: bool = False)
             what += f" ({req.practice_area})"
     else:
         what = req.practice_area or "your matter"
-    where = f" in {req.city}" if req.city else ""
+
+    place = req.city or req.state
+    if place and from_profile:
+        place_phrase = f"{place} (your profile location)"
+    else:
+        place_phrase = place
 
     if thin:
+        where = f" near {place_phrase}" if place else ""
         return (
             f"No advocate in the directory is a close match for {what}{where}. "
             f"These are the nearest profiles, but none of them lists that work "
             f"specifically - worth checking their profiles before you connect."
         )
 
-    if widened:
+    if widened and place:
+        fallback = (
+            f"others in {req.state} first, then elsewhere"
+            if req.state and req.city
+            else "the nearest matches from elsewhere"
+        )
         return (
-            f"No listed advocate{where} matches {what} closely, so these are the "
-            f"nearest matches from elsewhere. Match scores are calculated from "
-            f"profile information - practice area, relevant experience, location, "
-            f"years in practice - and are not user ratings."
+            f"No listed advocate in {place_phrase} matches {what} closely, so "
+            f"these are {fallback}. They are ordered by location, then by how "
+            f"closely their profile fits your matter - not by ratings."
         )
 
     plural = "advocate" if count == 1 else "advocates"
+    if place:
+        return (
+            f"Here {'is' if count == 1 else 'are'} {count} {plural} for {what}, "
+            f"nearest to {place_phrase} first. Within each location they are "
+            f"ordered by how closely their profile fits your matter - practice "
+            f"area, relevant experience and years in practice. No ratings or "
+            f"case outcomes are used."
+        )
     return (
-        f"These {count} {plural} have the strongest match scores for {what}{where}. "
-        f"The scores come from profile information such as practice area, relevant "
-        f"experience, location and years in practice. They are not user ratings, "
-        f"and no advocate here has been ranked by case outcomes."
+        f"Here {'is' if count == 1 else 'are'} {count} {plural} for {what}, "
+        f"ordered by how closely their profile fits your matter. Add a city to "
+        f"your profile or your question to see advocates near you first."
     )
 
 
@@ -323,10 +374,25 @@ async def recommend_advocates(
             detail="Could not read that request. Try rephrasing it.",
         )
 
+    # No place in the question: the user's own profile location stands in.
+    # Someone in Bhopal asking for "a property lawyer" means one in Bhopal,
+    # and making them type it every time is friction with no upside. Only
+    # filled when the question named neither a city nor a state, so an
+    # explicit "in Indore" always wins over the profile.
+    from_profile = False
+    if not req.city and not req.state:
+        profile_city = (current_user.city or "").strip() or None
+        profile_state = (current_user.state or "").strip() or None
+        if profile_city or profile_state:
+            req.city, req.state = profile_city, profile_state
+            from_profile = True
+
     understood = {
         "practice_area": req.practice_area,
         "matter_keywords": req.matter_keywords,
         "city": req.city,
+        "state": req.state,
+        "location_source": "profile" if from_profile else ("query" if (req.city or req.state) else None),
         "language": req.language,
         "min_experience": req.min_experience,
     }
@@ -336,18 +402,14 @@ async def recommend_advocates(
     if req.is_broad():
         return RecommendOut(kind="clarify", reply=CLARIFY, understood=understood)
 
-    rows = _candidates(db, req, city_filter=True)
-    widened = False
-    if not rows and req.city:
-        rows = _candidates(db, req, city_filter=False)
-        widened = True
+    rows = _candidates(db, req)
 
     if not rows:
         return RecommendOut(
             kind="none",
             reply=(
                 "There are no listed advocates matching that in the directory yet. "
-                "Try a broader area, or drop the city."
+                "Try a broader area."
             ),
             understood=understood,
         )
@@ -355,9 +417,16 @@ async def recommend_advocates(
     scored = []
     for user, prof in rows:
         result = advocate_match.score_advocate(req, user, prof)
-        scored.append((result, user, prof))
+        tier, loc_detail, loc_label = advocate_match.location_tier(
+            req.city, req.state, prof, user
+        )
+        scored.append((result, tier, loc_detail, loc_label, user, prof))
 
-    scored.sort(key=lambda s: s[0]["score"], reverse=True)
+    # Nearest first, then best fit within the tier. This is the whole
+    # ranking rule, and it is deliberately this blunt: a user asked for
+    # location to come first, so a same-city advocate who clears the
+    # relevance gate outranks a stronger profile two hundred km away.
+    scored.sort(key=lambda s: (s[1], -s[0]["score"]))
 
     def relevant(result) -> bool:
         """Did anything in this profile actually speak to the matter asked
@@ -377,38 +446,47 @@ async def recommend_advocates(
         top = scored[:3]
         thin = True
 
-    conns = _connections(db, current_user.id, [u.id for _, u, _ in top])
+    has_location = bool(req.city or req.state)
+    # Widened when a location was in play but nobody in the shortlist is in
+    # the requested city (or, with only a state, the requested state).
+    best_tier = min(s[1] for s in top)
+    target_tier = (
+        advocate_match.LOCAL_CITY if req.city else advocate_match.SAME_STATE
+    )
+    widened = has_location and not thin and best_tier > target_tier
 
-    items = [
-        ScoredAdvocate(
-            card=AdvocateCard(
-                user=_card(user),
-                specialization=prof.specialization,
-                practice_areas=prof.practice_areas,
-                courts=prof.courts,
-                languages=prof.languages,
-                years_experience=prof.years_experience,
-                current_firm=prof.current_firm,
-                practice_city=prof.practice_city,
-                short_bio=_short(prof.professional_bio or user.bio),
-                connection=_state(conns.get(user.id), current_user.id),
-            ),
-            score=result["score"],
-            reasons=advocate_match.top_reasons(result["factors"]),
-            factors=[FactorOut(**f) for f in result["factors"]],
+    conns = _connections(db, current_user.id, [s[4].id for s in top])
+
+    items = []
+    for result, tier, loc_detail, loc_label, user, prof in top:
+        reasons = advocate_match.top_reasons(result["factors"], limit=2)
+        if loc_detail:
+            reasons = [loc_detail] + reasons
+        items.append(
+            ScoredAdvocate(
+                card=AdvocateCard(
+                    user=_card(user),
+                    specialization=prof.specialization,
+                    practice_areas=prof.practice_areas,
+                    courts=prof.courts,
+                    languages=prof.languages,
+                    years_experience=prof.years_experience,
+                    current_firm=prof.current_firm,
+                    practice_city=prof.practice_city,
+                    short_bio=_short(prof.professional_bio or user.bio),
+                    connection=_state(conns.get(user.id), current_user.id),
+                ),
+                location_match=loc_label,
+                reasons=reasons,
+            )
         )
-        for result, user, prof in top
-    ]
 
+    place = req.city or req.state
     return RecommendOut(
         kind="matches",
-        reply=_reply_line(req, len(items), widened, thin),
+        reply=_reply_line(req, len(items), widened, thin, from_profile),
         understood=understood,
         items=items,
         widened=widened,
-        note=(
-            f"Showing advocates outside {req.city}."
-            if widened and req.city
-            else ""
-        ),
+        note=(f"No close match in {place} - showing the nearest others." if widened and place else ""),
     )

@@ -11,6 +11,7 @@ import ResetPassword from './pages/ResetPassword';
 import Ask from './pages/Ask';
 import Matters from './pages/Matters';
 import MatterDetail from './pages/MatterDetail';
+import MatterResearch from './pages/MatterResearch';
 import Advocates from './pages/Advocates';
 import AdvocateProfile from './pages/AdvocateProfile';
 import Network from './pages/Network';
@@ -65,6 +66,15 @@ export default function App() {
           element={
             <ProtectedRoute>
               <MatterDetail />
+            </ProtectedRoute>
+          }
+        />
+        {/* A matter's own research surface - scoped to that case file. */}
+        <Route
+          path="/matters/:id/research"
+          element={
+            <ProtectedRoute>
+              <MatterResearch />
             </ProtectedRoute>
           }
         />
