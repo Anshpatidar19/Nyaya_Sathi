@@ -39,6 +39,7 @@ from . import (
     supabase_auth,
 )
 from .auth import ensure_profile, get_current_user, require_advocate
+from . import answer_cache
 from .matters_api import router as matters_router
 from .network_api import router as network_router
 from .doc_intel_api import router as doc_intel_router
@@ -216,6 +217,21 @@ app.include_router(source_links_router)
 @app.get("/health")
 def health():
     return {"status": "ok"}
+
+
+@app.get("/cache/answers")
+def cache_answers(
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user),
+):
+    """What the answer cache holds, most-asked first.
+
+    Signed-in only, and it returns no user's data - a cached answer is
+    public legal information, keyed by the question, with no author. The
+    point is to see which questions are warm before a demo, and how many
+    answers the cache has saved.
+    """
+    return answer_cache.report(db)
 
 
 # ---------------- Auth ----------------
@@ -590,6 +606,17 @@ async def _matter_for_thread(
 
 
 
+def _answer_from_cache(cached: dict) -> schemas.AskResponse:
+    """A stored payload, back as an AskResponse.
+
+    Filtered to the fields the schema declares today: a row written by an
+    older or newer build may carry a key this one does not know, and a
+    replay must not fail over that.
+    """
+    known = set(schemas.AskResponse.model_fields)
+    return schemas.AskResponse(**{k: v for k, v in cached.items() if k in known})
+
+
 @app.post("/ask", response_model=schemas.AskResponse)
 async def ask(
     payload: schemas.AskRequest,
@@ -637,10 +664,30 @@ async def ask(
     )
 
     matter = await _matter_for_thread(db, current_user, convo, preloaded_matter)
+    state = payload.state or current_user.state
 
-    answer = await reasoning.answer_question(
-        question, payload.state or current_user.state, history, document, matter
+    # A repeat of a plain question is served from the cache: the stored
+    # answer already went through retrieval, synthesis and the grounding
+    # check, so replaying it is the same answer, with the same sources and
+    # the same badge, for one indexed SELECT.
+    cacheable = answer_cache.is_cacheable(
+        question,
+        document_id=payload.document_id,
+        matter_id=payload.matter_id,
+        conversation_id=payload.conversation_id,
+        has_history=bool(history),
     )
+    cached = (
+        await asyncio.to_thread(answer_cache.lookup, db, question, state)
+        if cacheable else None
+    )
+
+    if cached is not None:
+        answer = _answer_from_cache(cached)
+    else:
+        answer = await reasoning.answer_question(
+            question, state, history, document, matter
+        )
     if document:
         answer.document_name = document["filename"]
 
@@ -658,11 +705,20 @@ async def ask(
     convo.updated_at = datetime.datetime.utcnow()
     db.commit()
 
+    # Stored after the turn is saved, so a cache write can never delay the
+    # answer, and only for a freshly generated one - re-storing a replay
+    # would just rewrite the same row.
+    if cacheable and cached is None:
+        await asyncio.to_thread(
+            answer_cache.store, db, question, state, answer.model_dump()
+        )
+
     response = answer.model_dump()
     response["conversation_id"] = convo.id
     # The turn id is what /translate/answer works from - without it a live
     # answer can't be re-rendered until the thread is reloaded.
     response["query_log_id"] = log.id
+    response["cached"] = cached is not None
     return response
 
 
@@ -679,10 +735,17 @@ async def ask_stream(
                  (search, fetch, analyze, generate, finalize)
       delta    - more body text
       revised  - the validator replaced the body; show this instead
-      done     - citations, next steps, grounding, conversation_id
+      done     - citations, next steps, conversation_id - sent as soon as
+                 writing ends. `grounding_pending` true means the badge
+                 follows in:
+      grounding - the badge, once the grounding check finishes
       error    - nothing usable; the client should show the message
 
     Retrieval and validation are unchanged. Only the wait is different.
+
+    A repeat of a plain question is replayed from the answer cache: the
+    same body, sources and badge, streamed the same way so the card and
+    the typing look identical - it just arrives in well under a second.
     """
     question = payload.question.strip()
 
@@ -715,6 +778,17 @@ async def ask_stream(
     )
     matter = await _matter_for_thread(db, current_user, convo, preloaded_matter)
     state = payload.state or current_user.state
+    cacheable = answer_cache.is_cacheable(
+        question,
+        document_id=payload.document_id,
+        matter_id=payload.matter_id,
+        conversation_id=payload.conversation_id,
+        has_history=bool(history),
+    )
+    cached = (
+        await asyncio.to_thread(answer_cache.lookup, db, question, state)
+        if cacheable else None
+    )
     convo_id = convo.id
     # Captured before the generator starts. FastAPI closes the request-scoped
     # session as soon as this handler returns, but events() runs *after* that,
@@ -739,7 +813,13 @@ async def ask_stream(
                 answer_title=answer.title,
                 answer_body=answer.body,
                 citations_json=json.dumps([c.model_dump() for c in answer.citations]),
-                payload_json=json.dumps(answer.model_dump(), default=str),
+                # Stored with the retrieval-based badge and pending=False: if
+                # the reader leaves before the grounding check ends, a
+                # reloaded thread still shows a badge rather than a spinner.
+                # _apply_grounding replaces it with the checked one.
+                payload_json=json.dumps(
+                    {**answer.model_dump(), "grounding_pending": False}, default=str
+                ),
             )
             write_db.add(log)
             write_db.query(models.Conversation).filter(
@@ -782,9 +862,82 @@ async def ask_stream(
         finally:
             write_db.close()
 
+    def _apply_grounding(log_id: int | None, grounding: dict | None) -> None:
+        """Store the badge the grounding check produced, after the fact."""
+        if log_id is None:
+            return
+        write_db = SessionLocal()
+        try:
+            log = write_db.get(models.QueryLog, log_id)
+            if log is None:
+                return
+            try:
+                payload_obj = json.loads(log.payload_json or "{}")
+            except (TypeError, ValueError):
+                payload_obj = {}
+            payload_obj["grounding"] = grounding
+            payload_obj["grounding_pending"] = False
+            log.payload_json = json.dumps(payload_obj, default=str)
+            write_db.commit()
+        except Exception as exc:
+            write_db.rollback()
+            logger.exception("Could not store the grounding badge: %s", exc)
+        finally:
+            write_db.close()
+
+    def _store_in_cache(answer_payload: dict) -> None:
+        """Save a finished answer for the next time it is asked.
+
+        Its own session: this runs from the generator, after the request's
+        own session has been closed. Never inside the reader's wait - the
+        answer is already on screen by the time this is called.
+        """
+        write_db = SessionLocal()
+        try:
+            answer_cache.store(write_db, question, state, answer_payload)
+        finally:
+            write_db.close()
+
+    async def replay():
+        """A cached answer, sent in the shape of a live one.
+
+        Same event sequence the client already handles - status, deltas,
+        done - so nothing on the frontend needs to know this answer came
+        from the cache. The grounding badge is the checked one from the
+        stored row, so `grounding_pending` is never set here.
+        """
+        yield _sse({"type": "status", "stage": "search", "detail": "Found this answer already researched"})
+        body = cached.get("body") or ""
+        for chunk in answer_cache.replay_chunks(body):
+            yield _sse({"type": "delta", "text": chunk})
+            # A beat between chunks, so the answer reads as it arrives
+            # rather than landing as a block of text.
+            await asyncio.sleep(0.04)
+
+        answer = _answer_from_cache(cached)
+        log_id = await asyncio.to_thread(_save, answer)
+        final = answer.model_dump()
+        final["conversation_id"] = convo_id
+        final["query_log_id"] = log_id
+        final["cached"] = True
+        yield _sse({"type": "done", "answer": final})
+
+    if cached is not None:
+        return StreamingResponse(
+            replay(),
+            media_type="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache",
+                "Connection": "keep-alive",
+                "X-Accel-Buffering": "no",
+            },
+        )
+
     async def events():
         sent_done = False
         log_id = None
+        answered = None          # the payload, once writing has finished
+        stored = False           # the answer has been written to the cache
         try:
             async for kind, value in reasoning.answer_question_stream(
                 question, state, history, document, matter
@@ -801,9 +954,32 @@ async def ask_stream(
                     # stored row needs correcting as well as the screen.
                     if sent_done:
                         await asyncio.to_thread(_apply_revision, log_id, value)
+                    # Whatever ends up on screen is what a later replay must
+                    # show, so the cache copy follows the correction too.
+                    if answered is not None:
+                        answered["body"] = value
                     yield _sse({"type": "revised", "body": value})
 
+                elif kind == "grounding":
+                    # Sent to the reader first - the badge is the only thing
+                    # waiting on it - then stored.
+                    yield _sse({"type": "grounding", "grounding": value})
+                    await asyncio.to_thread(_apply_grounding, log_id, value)
+                    # Cached only now: the badge is part of the answer, and
+                    # an entry stored before the check would replay an
+                    # unchecked one every time after.
+                    if cacheable and answered is not None and not stored:
+                        answered["grounding"] = value
+                        answered["grounding_pending"] = False
+                        stored = True
+                        await asyncio.to_thread(_store_in_cache, answered)
+
                 elif kind == "error":
+                    if sent_done:
+                        # The answer is already on screen; a late failure
+                        # must not replace it with an error.
+                        logger.warning("Late stream error after done: %s", value)
+                        continue
                     yield _sse({"type": "error", "message": value})
                     return
 
@@ -826,6 +1002,12 @@ async def ask_stream(
                     log_id = await asyncio.to_thread(_save, answer)
 
                     final = answer.model_dump()
+                    if final.get("grounding_pending"):
+                        # The badge is not final until the grounding check
+                        # ends; the client shows "Checking grounding" and
+                        # the "grounding" event fills it in.
+                        final["grounding"] = None
+                    answered = dict(final)
                     final["conversation_id"] = convo_id
                     # None when the save failed, which the client reads as
                     # "this answer can't be translated" rather than crashing
@@ -842,8 +1024,16 @@ async def ask_stream(
                 })
             return
 
-        if not sent_done:
-            yield _sse({"type": "error", "message": "The answer could not be completed."})
+        if sent_done:
+            # No grounding event arrived - the check was skipped for this
+            # answer (an act overview, or a document), so its badge was
+            # final in `done` and the answer can be cached now.
+            if (cacheable and not stored and answered is not None
+                    and not answered.get("grounding_pending")):
+                await asyncio.to_thread(_store_in_cache, answered)
+            return
+
+        yield _sse({"type": "error", "message": "The answer could not be completed."})
 
     return StreamingResponse(
         events(),

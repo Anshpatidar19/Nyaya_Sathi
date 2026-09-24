@@ -57,6 +57,24 @@ class Settings(BaseSettings):
     #               behave like "always"
     gemini_simulate_503: str = os.getenv("GEMINI_SIMULATE_503", "")
 
+    # --- Answer cache ------------------------------------------------------
+    # A finished answer is stored in Postgres and replayed when the same
+    # question is asked again, which turns a ~10s answer into well under a
+    # second. Only plain first-turn questions are cached - never one with a
+    # document, a matter, or earlier turns behind it.
+    #
+    # ANSWER_CACHE=0 switches it off entirely (nothing read, nothing
+    # written). TTL is in days: statutes and judgments don't change often,
+    # but a stale answer should not live forever. MAX_ROWS caps the table -
+    # the least recently used rows are pruned past it.
+    answer_cache_enabled: bool = os.getenv("ANSWER_CACHE", "1") not in ("0", "false", "False")
+    answer_cache_ttl_days: float = float(os.getenv("ANSWER_CACHE_TTL_DAYS", "7"))
+    answer_cache_max_rows: int = int(os.getenv("ANSWER_CACHE_MAX_ROWS", "500"))
+    # Answers are replayed as a stream so the reader sees the same typing
+    # effect as a live answer, rather than a wall of text appearing at once.
+    # 0 sends the whole body in one go.
+    answer_cache_replay_cps: int = int(os.getenv("ANSWER_CACHE_REPLAY_CPS", "900"))
+
     # Supabase Postgres. Session pooler URI from
     # Project Settings -> Database -> Connection string -> URI
     database_url: str = os.getenv("DATABASE_URL", "")
