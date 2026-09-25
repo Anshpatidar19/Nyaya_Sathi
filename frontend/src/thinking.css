@@ -370,29 +370,3 @@
   .think-rail { background: var(--accent); opacity: .5; }
   .think-caret::after { opacity: 1; }
 }
-/* ---------- a replayed answer ----------
-   Sits beside the grounding badge on an answer served from the answer
-   cache, so a reply that lands in half a second does not look like it
-   skipped the research. */
-.cached-chip {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 3px 10px;
-  border-radius: 100px;
-  border: 1px solid var(--line);
-  background: var(--bg);
-  color: var(--ink-muted);
-  font-size: 11.5px;
-  font-weight: 700;
-  letter-spacing: .02em;
-  white-space: nowrap;
-  cursor: default;
-}
-.cached-chip::before {
-  content: '';
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: var(--ink-faint);
-}
