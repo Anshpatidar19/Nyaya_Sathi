@@ -45,7 +45,7 @@ from typing import Any, AsyncIterator, Dict, List, Optional, Tuple
 
 import httpx
 
-from . import groq_client
+from . import groq_client, usage_log
 from .config import settings
 
 logger = logging.getLogger(__name__)
@@ -463,6 +463,49 @@ async def _gemini_generate_raw(
     this one call (document reading can use a stronger vision model than
     the text pipeline without touching anything else).
     """
+    model_name = model or settings.gemini_model
+    started = time.perf_counter()
+    usage: Dict[str, Any] = {}
+    try:
+        text, finish_reason, usage = await _gemini_generate_once(
+            prompt, system_instruction, temperature, max_output_tokens,
+            thinking_budget, media, model_name, attempt,
+        )
+    except GeminiError as exc:
+        # A failed call is logged too: a 503 that was retried and a 429 that
+        # went to Groq are part of what a query cost in time, even when
+        # Google bills nothing for them.
+        inp, out, tot = usage_log.gemini_tokens(getattr(exc, "usage", None))
+        usage_log.record(
+            model=model_name, input_tokens=inp, output_tokens=out, total_tokens=tot,
+            latency_ms=(time.perf_counter() - started) * 1000,
+            status="error", error=str(exc),
+        )
+        raise
+    inp, out, tot = usage_log.gemini_tokens(usage)
+    usage_log.record(
+        model=model_name, input_tokens=inp, output_tokens=out, total_tokens=tot,
+        latency_ms=(time.perf_counter() - started) * 1000, status="success",
+    )
+    return text, finish_reason
+
+
+async def _gemini_generate_once(
+    prompt: str,
+    system_instruction: str,
+    temperature: float,
+    max_output_tokens: int,
+    thinking_budget: Optional[int],
+    media: Optional[List[Tuple[str, bytes]]],
+    model_name: str,
+    attempt: int,
+) -> Tuple[str, str, Dict[str, Any]]:
+    """The HTTP half of _gemini_generate_raw. Returns (text, finish, usage).
+
+    Split out so the caller can time and cost every outcome in one place.
+    An empty response still consumed tokens, so its GeminiError carries the
+    usage block as `.usage` for the cost line.
+    """
     if not settings.gemini_api_key:
         raise GeminiError("GEMINI_API_KEY is not set. Add it to backend/.env.")
 
@@ -470,7 +513,6 @@ async def _gemini_generate_raw(
     if fake:
         raise fake
 
-    model_name = model or settings.gemini_model
     url = f"{GEMINI_BASE}/models/{model_name}:generateContent"
 
     generation_config: Dict[str, Any] = {
@@ -535,15 +577,17 @@ async def _gemini_generate_raw(
 
     if not text:
         usage = data.get("usageMetadata", {})
-        raise GeminiError(
+        empty = GeminiError(
             "Gemini returned an empty response "
             f"(finishReason={finish_reason}, usage={usage}). "
             "If finishReason is MAX_TOKENS the budget was spent on thinking "
             "before any answer was produced - raise max_output_tokens or lower "
             "thinking_budget."
         )
+        empty.usage = usage   # billed even though unusable - see the caller
+        raise empty
 
-    return text, finish_reason
+    return text, finish_reason, usage
 
 
 async def _groq_complete(
@@ -887,6 +931,48 @@ async def _gemini_stream_raw(
     thinking_budget: Optional[int] = DEFAULT_THINKING_BUDGET,
     attempt: int = 0,
 ) -> AsyncIterator[Tuple[str, Any]]:
+    """One Gemini stream, no fallback, with its cost line.
+
+    The LLM_CALL line is written when the stream ends however it ends -
+    finished, failed (503, stall, 429) or abandoned by a reader who closed
+    the tab - with whatever usage Gemini had reported by then.
+    """
+    started = time.perf_counter()
+    meta: Dict[str, Any] = {"usage": {}}
+    status, error = "success", None
+    try:
+        async for item in _gemini_stream_once(
+            prompt, system_instruction, temperature, max_output_tokens,
+            thinking_budget, attempt, meta,
+        ):
+            yield item
+    except GeminiError as exc:
+        status, error = "error", str(exc)
+        raise
+    except (GeneratorExit, asyncio.CancelledError):
+        status, error = "cancelled", "stream closed before it finished"
+        raise
+    except Exception as exc:
+        status, error = "error", f"{type(exc).__name__}: {exc}"
+        raise
+    finally:
+        inp, out, tot = usage_log.gemini_tokens(meta.get("usage"))
+        usage_log.record(
+            model=settings.gemini_model, input_tokens=inp, output_tokens=out,
+            total_tokens=tot, latency_ms=(time.perf_counter() - started) * 1000,
+            status=status, error=error,
+        )
+
+
+async def _gemini_stream_once(
+    prompt: str,
+    system_instruction: str,
+    temperature: float,
+    max_output_tokens: int,
+    thinking_budget: Optional[int],
+    attempt: int,
+    meta: Dict[str, Any],
+) -> AsyncIterator[Tuple[str, Any]]:
     """One Gemini stream, no fallback.
 
     Yields ("delta", new_text) as the body arrives, then ("raw", full_json).
@@ -1003,6 +1089,7 @@ async def _gemini_stream_raw(
 
                     if isinstance(obj, dict) and obj.get("usageMetadata"):
                         usage = obj["usageMetadata"]
+                        meta["usage"] = usage
 
                     try:
                         candidate = obj["candidates"][0]

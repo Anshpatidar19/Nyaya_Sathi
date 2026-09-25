@@ -37,7 +37,7 @@ from typing import Any, Dict, List, Optional
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
-from . import models
+from . import models, usage_log
 from .config import settings
 
 logger = logging.getLogger(__name__)
@@ -166,6 +166,8 @@ def lookup(db: Session, question: str, state: Optional[str]) -> Optional[Dict[st
         # The thread this answer lands in is decided per request.
         payload.pop("conversation_id", None)
         payload.pop("query_log_id", None)
+        # No model call is made for this request; QUERY_COST says so.
+        usage_log.mark_cache_hit()
         logger.info(
             "Answer cache HIT (asked %d times, served %d) for %r",
             row.ask_count, row.hit_count, question[:60],

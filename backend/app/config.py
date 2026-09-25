@@ -75,6 +75,22 @@ class Settings(BaseSettings):
     # 0 sends the whole body in one go.
     answer_cache_replay_cps: int = int(os.getenv("ANSWER_CACHE_REPLAY_CPS", "900"))
 
+    # --- Usage / cost logging ----------------------------------------------
+    # Every model call prints an LLM_CALL line in the backend terminal, and
+    # every request that used a model prints a QUERY_COST total - see
+    # usage_log.py. USAGE_LOG=0 switches both off. USAGE_LOG_FORMAT=json
+    # prints one JSON object per line instead of key=value, for piping into
+    # jq or a spreadsheet.
+    usage_log: bool = os.getenv("USAGE_LOG", "1") not in ("0", "false", "False")
+    usage_log_format: str = os.getenv("USAGE_LOG_FORMAT", "kv")
+    # Rupees per dollar for estimated_cost_inr. Exchange rates move; set the
+    # day's rate in .env if the INR column needs to be exact.
+    usd_inr_rate: float = float(os.getenv("USD_INR_RATE", "88.0"))
+    # Optional price overrides, USD per 1M tokens as [input, output], e.g.
+    # LLM_PRICES_JSON={"gemini-3.1-flash-lite": [0.25, 1.50]}
+    # Defaults live in usage_log._DEFAULT_PRICES.
+    llm_prices_json: str = os.getenv("LLM_PRICES_JSON", "")
+
     # Supabase Postgres. Session pooler URI from
     # Project Settings -> Database -> Connection string -> URI
     database_url: str = os.getenv("DATABASE_URL", "")

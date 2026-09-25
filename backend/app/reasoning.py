@@ -19,7 +19,7 @@ import time
 from dataclasses import dataclass, field
 from typing import Any, AsyncIterator, Callable, Dict, List, Optional, Tuple
 
-from . import gemini, kanoon, routing, statutes, validity
+from . import dynamic_query, gemini, kanoon, routing, statutes, validity
 from .config import settings
 from .schemas import AskResponse, Citation
 
@@ -356,12 +356,23 @@ async def _hydrate(results: List[Dict[str, Any]], query: str) -> List[Dict[str, 
 def _local_sources(
     retrieval_text: str,
     overview: Optional[Dict[str, Any]],
+    plan: Optional[List["dynamic_query.Query"]] = None,
 ) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
     """The local half of retrieval. Synchronous on purpose - see retrieve().
 
+    `plan` is set for an attached document that names no provision: its
+    clauses are searched one by one and fused (dynamic_query.retrieve)
+    rather than as a single bag of words, which matched stray vocabulary -
+    "leaving" in an employment contract found the Motor Vehicles Act.
+
     Returns (sources, statute_hits).
     """
-    statute_hits = [] if overview else statutes.search(retrieval_text, limit=TOP_STATUTES)
+    if overview:
+        statute_hits = []
+    elif plan:
+        statute_hits = dynamic_query.retrieve(plan, limit=TOP_STATUTES)
+    else:
+        statute_hits = statutes.search(retrieval_text, limit=TOP_STATUTES)
 
     if overview:
         sources = [statutes.overview_as_source(overview)]
@@ -442,10 +453,27 @@ async def retrieve(
     """
     # With a document attached, "explain this" carries no retrievable terms.
     # The provisions the document itself names are what to look up.
-    doc_terms = document_query(document["text"]) if document and document.get("text") else ""
+    doc_text = document.get("text") if document else ""
+    doc_terms = document_query(doc_text) if doc_text else ""
     matter_terms = "" if doc_terms else matter_anchors(question, matter)
     extra = " ".join(t for t in (doc_terms, matter_terms) if t)
     retrieval_text = f"{question} {extra}".strip() if extra else question
+
+    # A document that names no provision used to be searched with the
+    # question alone - and with nothing typed, that question is the fixed
+    # "Explain this document and what it means for me." Now the document's
+    # own vocabulary drives the search (dynamic_query.retrieval_text): the
+    # user's words when they carry a subject, then the document's most
+    # distinctive statute terms. A document that DOES cite sections keeps
+    # the exact-citation path above, which is the stronger signal.
+    doc_plan = None
+    if doc_text and not doc_terms:
+        doc_plan = dynamic_query.build_queries(user_text=question, document_text=doc_text)
+        dynamic = dynamic_query.retrieval_text(question, doc_text)
+        if dynamic:
+            # Still one string for Kanoon (one metered search) and routing.
+            retrieval_text = dynamic
+            logger.info("DYNAMIC_SEARCH ask+document kanoon/routing query=%r", dynamic[:160])
 
     _report(
         report, "search",
@@ -455,10 +483,10 @@ async def retrieve(
 
     # Act-level question ("tell me about BNS") - BM25 can't help, answer
     # directly. Pure regex against a dictionary, so it stays inline.
-    overview = statutes.act_overview(retrieval_text)
+    overview = None if doc_plan else statutes.act_overview(retrieval_text)
 
     local_task = asyncio.create_task(
-        asyncio.to_thread(_local_sources, retrieval_text, overview)
+        asyncio.to_thread(_local_sources, retrieval_text, overview, doc_plan)
     )
 
     query = refine_query(retrieval_text, None)   # state goes in the court filter now

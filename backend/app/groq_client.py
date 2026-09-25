@@ -22,13 +22,16 @@ gemini.py, so both providers go through identical post-processing and the
 frontend cannot tell which one wrote the answer.
 """
 
+import asyncio
 import json
 import logging
 import re
+import time
 from typing import Any, AsyncIterator, Dict, Optional, Tuple
 
 import httpx
 
+from . import usage_log
 from .config import settings
 
 logger = logging.getLogger(__name__)
@@ -186,7 +189,41 @@ async def complete_json(
     temperature: float = 0.2,
     max_output_tokens: int = 2048,
 ) -> Tuple[str, str]:
-    """One-shot completion. Returns (text, finish_reason) like gemini._generate_raw."""
+    """One-shot completion. Returns (text, finish_reason) like gemini._generate_raw.
+
+    Writes one LLM_CALL line. Groq is only ever reached as the fallback, so
+    a successful call is logged with status=fallback.
+    """
+    started = time.perf_counter()
+    meta: Dict[str, Any] = {"usage": {}}
+    try:
+        result = await _complete_json_once(
+            prompt, system_instruction, temperature, max_output_tokens, meta
+        )
+    except GroqError as exc:
+        inp, out, tot = usage_log.openai_tokens(meta.get("usage"))
+        usage_log.record(
+            model=settings.groq_model, input_tokens=inp, output_tokens=out,
+            total_tokens=tot, latency_ms=(time.perf_counter() - started) * 1000,
+            status="error", error=str(exc),
+        )
+        raise
+    inp, out, tot = usage_log.openai_tokens(meta.get("usage"))
+    usage_log.record(
+        model=settings.groq_model, input_tokens=inp, output_tokens=out,
+        total_tokens=tot, latency_ms=(time.perf_counter() - started) * 1000,
+        status="fallback",
+    )
+    return result
+
+
+async def _complete_json_once(
+    prompt: str,
+    system_instruction: str,
+    temperature: float,
+    max_output_tokens: int,
+    meta: Dict[str, Any],
+) -> Tuple[str, str]:
     _require_key()
 
     resp = await _post(_payload(prompt, system_instruction, temperature,
@@ -209,6 +246,7 @@ async def complete_json(
     finish = _finish(choice.get("finish_reason"))
 
     usage = data.get("usage") or {}
+    meta["usage"] = usage
     logger.info(
         "GROQ model=%s in=%s out=%s finish=%s",
         settings.groq_model,
@@ -232,8 +270,50 @@ async def stream_json(
 
     If Groq refuses to stream in JSON mode for the configured model (a 400 on
     open), this falls back to complete_json() and yields the whole text as a
-    single chunk - still correct, just not incremental.
+    single chunk - still correct, just not incremental. That path writes its
+    own LLM_CALL line, so this wrapper does not write a second one.
     """
+    started = time.perf_counter()
+    meta: Dict[str, Any] = {"usage": {}, "chars": 0, "delegated": False}
+    status, error = "fallback", None
+    try:
+        async for item in _stream_json_once(
+            prompt, system_instruction, temperature, max_output_tokens, meta
+        ):
+            yield item
+    except GroqError as exc:
+        status, error = "error", str(exc)
+        raise
+    except (GeneratorExit, asyncio.CancelledError):
+        status, error = "cancelled", "stream closed before it finished"
+        raise
+    except Exception as exc:
+        status, error = "error", f"{type(exc).__name__}: {exc}"
+        raise
+    finally:
+        if not meta["delegated"]:
+            inp, out, tot = usage_log.openai_tokens(meta.get("usage"))
+            estimated = False
+            if not inp and not out:
+                # No usage frame on the stream: estimate from what was sent
+                # and received so the cost line is never silently zero.
+                inp = usage_log.estimate_tokens(system_instruction + prompt)
+                out = (meta["chars"] // 4) if meta["chars"] else 0
+                tot, estimated = inp + out, True
+            usage_log.record(
+                model=settings.groq_model, input_tokens=inp, output_tokens=out,
+                total_tokens=tot, latency_ms=(time.perf_counter() - started) * 1000,
+                status=status, error=error, tokens_estimated=estimated,
+            )
+
+
+async def _stream_json_once(
+    prompt: str,
+    system_instruction: str,
+    temperature: float,
+    max_output_tokens: int,
+    meta: Dict[str, Any],
+) -> AsyncIterator[Tuple[str, str]]:
     _require_key()
 
     finish = "UNKNOWN"
@@ -270,12 +350,18 @@ async def stream_json(
                         raise GroqError(
                             f"Groq stream error ({err.get('code') or err.get('type') or 'error'})"
                         )
+                    # Groq puts the token counts on the last chunk, under
+                    # x_groq.usage (or usage, OpenAI-style).
+                    stream_usage = obj.get("usage") or (obj.get("x_groq") or {}).get("usage")
+                    if stream_usage:
+                        meta["usage"] = stream_usage
                     choices = obj.get("choices") or []
                     if not choices:
                         continue
                     choice = choices[0]
                     piece = (choice.get("delta") or {}).get("content")
                     if piece:
+                        meta["chars"] += len(piece)
                         yield "text", piece
                     if choice.get("finish_reason"):
                         finish = _finish(choice["finish_reason"])
@@ -283,6 +369,7 @@ async def stream_json(
         raise GroqError(f"Groq stream failed: {type(exc).__name__}") from exc
 
     if fallback_to_complete:
+        meta["delegated"] = True    # complete_json logs its own cost line
         text, finish = await complete_json(
             prompt, system_instruction, temperature, max_output_tokens
         )
