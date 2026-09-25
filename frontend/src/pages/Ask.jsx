@@ -1145,21 +1145,6 @@ function Citations({ items, label = 'Sources' }) {
 /* How well the answer is supported. The backend derives this from what
    retrieval returned and what the prose cites — it is never a number the
    model gave itself, which is why it can be trusted enough to show. */
-/* Shown on an answer served from the cache: the same answer, sources and
-   badge as when it was first researched, replayed instead of paid for
-   again. Worth saying out loud rather than hiding - an answer that appears
-   in half a second otherwise looks like it skipped the research. */
-function CachedChip() {
-  return (
-    <span
-      className="cached-chip"
-      title="This question was researched earlier - the saved answer, sources and grounding check are being shown again"
-    >
-      Saved answer
-    </span>
-  );
-}
-
 function Grounding({ data }) {
   if (!data) return <div className="status-chip live"><span className="dot" /> Answered live</div>;
 
@@ -1251,7 +1236,6 @@ export function AskResult({ data, token }) {
       <div className="demo-topbar">
         <div className="demo-brand"><span className="sq">न्या</span> Research</div>
         <div className="demo-topbar-actions">
-          {data.cached && <CachedChip />}
           <Grounding data={data.grounding} />
         </div>
       </div>

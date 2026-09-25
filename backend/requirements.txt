@@ -17,3 +17,4 @@ pinecone==5.3.1
 # Hub. Not imported at runtime - the app does not need it in production, and
 # `--local-file` skips it entirely.
 datasets==3.2.0
+psycopg2-binary

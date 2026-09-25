@@ -797,7 +797,9 @@ if _EXT_NAMES:
 
 _CITE_RE = re.compile(
     rf"(?:(?P<act1>{_ACT_TOKENS})\s*)?"
-    r"(?P<unit>article|art\.?|section|sec\.?|s\.?|u/s)?\s*"
+    # \b on every unit: without it the trailing "s" of any plural ("items 5",
+    # "months 3") was read as the abbreviation "s." for section.
+    r"(?P<unit>\b(?:article|art\b\.?|section|sec\b\.?|s\b\.?|u/s))?\s*"
     # Lookbehind and lookahead both reject a digit run of 4+: without them,
     # \d{1,3} happily reads the first three digits out of ANY longer number -
     # "Consumer Protection Act, 2019" matched "201" as a bare section number,
@@ -851,6 +853,14 @@ def lookup_section(query: str) -> List[Dict[str, Any]]:
     for m in _CITE_RE.finditer(query):
         num = m.group("num")
         if not num:
+            continue
+        # A number is a citation only when something says so: a unit
+        # ("section 3", "art. 21", "u/s 138") or an act ("BNS 85", "85 of
+        # the IPC"). A bare number is an amount, a date or a duration -
+        # "salary for 3 months" returned Section 3 of every act, and because
+        # search() trusts an exact citation over BM25, the question's actual
+        # subject was never searched at all.
+        if not m.group("unit") and not (m.group("act1") or m.group("act2")):
             continue
         raw_act = (m.group("act1") or m.group("act2") or "").lower().strip()
         act = _ACT_ALIASES.get(raw_act, raw_act)
