@@ -13,14 +13,16 @@ invented section number - fabricated citations in legal documents are the
 single most damaging thing this feature could do.
 
 Document types live in DOC_TYPES. Each entry declares the fields a draft
-needs and the statute queries used to pull governing law into context.
+needs and low-weight statute queries for that type. Retrieval itself is
+built from the request (dynamic_query.py); the per-type queries only fill
+gaps the request leaves.
 """
 
 import logging
 import re
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 
-from . import gemini, statutes
+from . import dynamic_query, gemini, statutes
 
 logger = logging.getLogger(__name__)
 
@@ -283,58 +285,74 @@ def list_types() -> List[Dict[str, Any]]:
 # Grounding: pull real statute sections for this document type
 # ---------------------------------------------------------------------------
 
-# BM25 always returns its top N, even when nothing is genuinely relevant -
-# there's no score floor. For Q&A that's tolerable because the synthesis agent
-# discards the noise. For DRAFTING it is dangerous: handing Gemini "Section 85,
+# Retrieval is driven by the request itself - see dynamic_query.py. The
+# user's instruction or situation, the provisions the document names, and
+# the document's most legally-loaded clauses each become a query, and the
+# hits are fused by rank. A document type's `statute_queries` are no longer
+# the search: they join the fusion at the lowest weight, filling gaps the
+# request leaves without outranking anything it points at.
+#
+# The relevance gate stays: BM25 always returns its top N even when nothing
+# fits, and for drafting that is dangerous - handing Gemini "Section 85,
 # cruelty by husband" as a citable source for a cheque bounce notice is an
-# invitation to cite it. So every candidate must clear a relevance bar before
-# it is offered for citation. Offering nothing is the correct outcome when the
-# governing act hasn't been ingested.
+# invitation to cite it. Offering nothing is correct when nothing fits.
 
-MIN_TERM_OVERLAP = 2  # distinct query terms that must appear in the section
+MAX_GROUNDING_SOURCES = 6
+
+# Progress callback: report(stage, detail). Same vocabulary as the Ask
+# pipeline (reasoning.Reporter) so the frontend draws one stepper for every
+# mode: search, fetch, analyze, generate, finalize. Each call is made the
+# moment that work actually starts.
+Reporter = Optional[Callable[[str, str], None]]
+
+
+def _report(report: Reporter, stage: str, detail: str) -> None:
+    if report is None:
+        return
+    try:
+        report(stage, detail)
+    except Exception:   # progress is cosmetic; it must never break a result
+        logger.debug("Progress report failed for stage %s", stage)
+
+
+def _found(n: int) -> str:
+    if not n:
+        return "No closely matching provision found - checking on general principles"
+    return f"Found {n} relevant statutory provision{'s' if n != 1 else ''}"
 
 
 def _relevant(hit: Dict[str, Any], query: str) -> bool:
-    terms = set(statutes._tokenize(query))
-    if not terms:
-        return False
-    haystack = set(hit.get("_tokens") or [])
-    overlap = terms & haystack
-    if len(overlap) >= MIN_TERM_OVERLAP:
-        return True
-    # A single overlap counts only if it also appears in the section title -
-    # that means the section is *about* the term, not merely mentioning it.
-    title_terms = set(statutes._tokenize(hit.get("title") or ""))
-    return bool(overlap & title_terms)
+    """Kept for any caller outside this module; the gate lives in
+    dynamic_query.relevant now."""
+    return dynamic_query.relevant(hit, query)
 
 
-def _ground(doc_type: Optional[str], extra_text: str = "") -> List[Dict[str, Any]]:
-    """Retrieve the statute sections that govern this document.
+def _ground(
+    doc_type: Optional[str],
+    user_text: str = "",
+    document_text: str = "",
+) -> List[Dict[str, Any]]:
+    """Retrieve the statute sections that govern THIS request.
+
+    user_text      - the drafting instructions, or the reviewer's stated
+                     situation / question about the document
+    document_text  - the counterparty's document under review (empty for a
+                     draft)
 
     Returns source dicts in the same shape reasoning.py uses, so citations
     carry real, openable URLs. Returns [] when nothing relevant is indexed -
-    the drafting prompt handles that case by citing nothing.
+    the prompts handle that case by citing nothing.
     """
-    queries: List[str] = []
-    if doc_type and doc_type in DOC_TYPES:
-        queries.extend(DOC_TYPES[doc_type]["statute_queries"])
-    if extra_text:
-        queries.append(extra_text[:400])
-
-    seen = set()
-    sources: List[Dict[str, Any]] = []
-    for q in queries:
-        for hit in statutes.search(q, limit=STATUTES_PER_QUERY):
-            key = (hit["act_key"], hit["section"])
-            if key in seen:
-                continue
-            if not _relevant(hit, q):
-                logger.debug("Dropped irrelevant grounding hit: %s %s for %r",
-                             hit["act_short"], hit["section"], q)
-                continue
-            seen.add(key)
-            sources.append(statutes.as_source(hit))
-    return sources
+    static = DOC_TYPES.get(doc_type or "", {}).get("statute_queries", [])
+    plan = dynamic_query.build_queries(
+        user_text=user_text,
+        document_text=document_text,
+        static_queries=static,
+    )
+    hits = dynamic_query.retrieve(
+        plan, limit=MAX_GROUNDING_SOURCES, per_query=STATUTES_PER_QUERY + 1
+    )
+    return [statutes.as_source(hit) for hit in hits]
 
 
 def _source_block(sources: List[Dict[str, Any]]) -> str:
@@ -409,9 +427,15 @@ async def draft(
     doc_type: Optional[str],
     instructions: str,
     details: Optional[Dict[str, Any]] = None,
+    report: Reporter = None,
 ) -> Dict[str, Any]:
     meta = DOC_TYPES.get(doc_type or "", {})
-    sources = _ground(doc_type, instructions)
+    detail_text = " ".join(
+        str(v) for v in (details or {}).values() if v not in (None, "")
+    )
+    _report(report, "search", "Searching the statutes your instructions point to")
+    sources = _ground(doc_type, user_text=f"{instructions} {detail_text}".strip())
+    _report(report, "fetch", _found(len(sources)))
 
     detail_lines = ""
     if details:
@@ -428,9 +452,11 @@ async def draft(
         "Produce the draft now, as JSON."
     )
 
+    _report(report, "analyze", f"Drafting the {meta.get('name', 'document').lower()}")
     data = gemini._parse_json(
         await gemini._generate(prompt, _DRAFT_SYSTEM, temperature=0.3, max_output_tokens=6000)
     )
+    _report(report, "generate", "Checking the draft's citations against the retrieved law")
 
     used = [int(n) for n in (data.get("used_sources") or []) if str(n).isdigit()]
 
@@ -493,6 +519,7 @@ async def review(
     document_text: str,
     doc_type: Optional[str] = None,
     context: Optional[str] = None,
+    report: Reporter = None,
 ) -> Dict[str, Any]:
     text = (document_text or "").strip()
     if not text:
@@ -501,7 +528,12 @@ async def review(
     truncated = len(text) > MAX_DOC_CHARS
     text = text[:MAX_DOC_CHARS]
 
-    sources = _ground(doc_type, text[:2000])
+    # The reviewer's situation ("check the notice period") and the whole
+    # document drive the search - not the first 2,000 characters, and not a
+    # fixed list per document type.
+    _report(report, "search", "Finding the clauses that matter and the law behind them")
+    sources = _ground(doc_type, user_text=context or "", document_text=text)
+    _report(report, "fetch", _found(len(sources)))
 
     prompt = (
         f"DOCUMENT TYPE: {DOC_TYPES.get(doc_type or '', {}).get('name') or 'unknown'}\n"
@@ -511,9 +543,11 @@ async def review(
         "Review it now, as JSON."
     )
 
+    _report(report, "analyze", "Checking each clause for risk to you")
     data = gemini._parse_json(
         await gemini._generate(prompt, _REVIEW_SYSTEM, temperature=0.15, max_output_tokens=6000)
     )
+    _report(report, "generate", "Attaching the supporting provision to each flag")
 
     flags = []
     for f in data.get("flags") or []:

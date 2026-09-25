@@ -19,15 +19,15 @@ import {
   askQuestionStream,
   translateAnswer,
   translateText,
-  createDraft,
+  createDraftStream,
   deleteConversation,
   downloadDraftDocx,
   fetchConversation,
   fetchConversations,
   fetchArgumentSides,
   fetchDraftTypes,
-  generateArguments,
-  reviewDocument,
+  generateArgumentsStream,
+  reviewDocumentStream,
   uploadDocument,
 } from '../api';
 
@@ -524,14 +524,21 @@ export default function Ask() {
     setError('');
     setLoading(true);
     setInput('');
+    // Draft, Review and Arguments open straight into the live stepper, so
+    // there is never a static "Thinking" line - the server's status events
+    // take it from here (see liveProgress below).
+    const LIVE_BRAND = { draft: 'Draft', review: 'Review', argue: 'Arguments' };
+    const liveBrand = !analyseFile ? LIVE_BRAND[mode] : undefined;
     setTurns((t) => [
       ...t,
-      {
-        kind: 'pending',
-        prompt: bubble,
-        file: sentFile?.filename,
-        label: analyseFile ? 'Reading the document\u2026' : undefined,
-      },
+      liveBrand
+        ? { kind: 'streaming', body: '', brand: liveBrand, prompt: bubble, file: sentFile?.filename }
+        : {
+            kind: 'pending',
+            prompt: bubble,
+            file: sentFile?.filename,
+            label: analyseFile ? 'Reading the document\u2026' : undefined,
+          },
     ]);
 
     try {
@@ -561,6 +568,21 @@ export default function Ask() {
           ]);
         }
       }
+
+      // Draft, Review and Arguments: the pending turn becomes the same live
+      // stepper Ask uses, driven by the server's own status events - each
+      // step lights up when that work actually starts (reading the document,
+      // searching the statutes, Kanoon, writing, saving). The finished
+      // payload replaces it below, exactly as before.
+      const liveProgress = (brand) => (status) =>
+        setTurns((t) => {
+          if (!t.length) return t;
+          const last = t[t.length - 1];
+          if (last.kind !== 'pending' && last.kind !== 'streaming') return t;
+          const next = [...t];
+          next[next.length - 1] = { ...last, kind: 'streaming', body: '', brand, status };
+          return next;
+        });
 
       if (turn) {
         // Already settled by the analysis step above.
@@ -643,12 +665,12 @@ export default function Ask() {
         };
         refreshHistory({ fresh: true });   // the new thread must appear now
       } else if (mode === 'draft') {
-        const data = await createDraft(token, {
+        const data = await createDraftStream(token, {
           doc_type: docType || null,
           instructions: prompt,
           details: null,
           conversation_id: conversationId,
-        });
+        }, { onStatus: liveProgress('Draft') });
         if (data.conversation_id) {
           setConversationId(data.conversation_id);
           thread.remember(data.conversation_id);
@@ -656,7 +678,7 @@ export default function Ask() {
         turn = { kind: 'draft', ...data, prompt: bubble };
         refreshHistory({ fresh: true });   // the new thread must appear now
       } else if (mode === 'review') {
-        const data = await reviewDocument(token, {
+        const data = await reviewDocumentStream(token, {
           // A pasted clause and an uploaded file are both valid ways to
           // supply the document. When a file is attached it IS the
           // document to review, so any typed note ("check the legitimacy
@@ -667,7 +689,7 @@ export default function Ask() {
           doc_type: docType || null,
           context: sentFile ? prompt.trim() || null : null,
           conversation_id: conversationId,
-        });
+        }, { onStatus: liveProgress('Review') });
         if (data.conversation_id) {
           setConversationId(data.conversation_id);
           thread.remember(data.conversation_id);
@@ -675,14 +697,14 @@ export default function Ask() {
         turn = { kind: 'review', ...data, prompt: bubble, file: sentFile?.filename };
         refreshHistory({ fresh: true });
       } else if (mode === 'argue') {
-        const data = await generateArguments(token, {
+        const data = await generateArgumentsStream(token, {
           facts: prompt.trim() || null,
           document_id: sentFile?.id,
           side,
           issue: issue.trim() || null,
           court: court.trim() || null,
           state: user?.state,
-        });
+        }, { onStatus: liveProgress('Arguments') });
         turn = { kind: 'argue', ...data, prompt: bubble, file: sentFile?.filename };
       } else {
         // Unreachable - every mode is handled above. Kept so a future mode
@@ -1016,7 +1038,7 @@ export default function Ask() {
                         <span className="spinner" /> {t.label || 'Thinking through this…'}
                       </div>
                     ) : t.kind === 'streaming' ? (
-                      <StreamingAnswer body={t.body} status={t.status} />
+                      <StreamingAnswer body={t.body} status={t.status} brand={t.brand} />
                     ) : t.kind === 'rejected' ? (
                       <div className="ask-rejection">{t.message}</div>
                     ) : (

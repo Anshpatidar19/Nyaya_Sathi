@@ -230,6 +230,77 @@ export async function askQuestionStream(
   return answer;
 }
 
+// Draft, Review, Arguments and the advocate finder, with live progress.
+//
+// Same frames as /ask/stream: `status` {stage, detail} each time the server
+// starts a real pipeline step, then `done` {answer} with exactly the JSON the
+// plain endpoint returns - or `error` {message, status}. A 422 is a refusal
+// (err.terminal), shown as a reply rather than retried, same as handle().
+export async function postWithProgress(url, token, body, { onStatus } = {}) {
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) return handle(res);   // auth / validation fail before the stream opens
+
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    const frames = buffer.split('\n\n');
+    buffer = frames.pop() ?? '';
+
+    for (const frame of frames) {
+      const line = frame.split('\n').find((l) => l.startsWith('data:'));
+      if (!line) continue;
+      let event;
+      try {
+        event = JSON.parse(line.slice(5).trim());
+      } catch {
+        continue;
+      }
+      if (event.type === 'status') {
+        onStatus?.({ stage: event.stage, detail: event.detail });
+      } else if (event.type === 'done') {
+        return event.answer;
+      } else if (event.type === 'error') {
+        const err = new Error(
+          event.status === 401
+            ? 'Your session has expired. Sign in again to continue.'
+            : event.message || 'Something went wrong. Please try again.',
+        );
+        err.status = event.status;
+        err.terminal = event.status === 422;
+        throw err;
+      }
+    }
+  }
+  throw new Error('The response ended before it was complete.');
+}
+
+export async function createDraftStream(token, payload, handlers) {
+  // payload: { doc_type, instructions, details, conversation_id }
+  return postWithProgress(`${BASE_URL}/draft/stream`, token, payload, handlers);
+}
+
+export async function reviewDocumentStream(token, payload, handlers) {
+  // payload: { document_text, document_id, doc_type, context, conversation_id }
+  return postWithProgress(`${BASE_URL}/review/stream`, token, payload, handlers);
+}
+
+export async function generateArgumentsStream(token, payload, handlers) {
+  // payload: { facts, document_id, side, issue, court, state }
+  return postWithProgress(`${BASE_URL}/arguments/stream`, token, payload, handlers);
+}
+
 // Re-renders a stored answer in another language. The English original is
 // never overwritten server-side - this returns a rendering of it, and the
 // backend caches the result so switching back is instant.

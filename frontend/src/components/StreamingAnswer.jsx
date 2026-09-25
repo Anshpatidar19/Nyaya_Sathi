@@ -12,7 +12,9 @@
      generate  the first word of the answer has arrived
      finalize  prose finished - citations and grounding being assembled
 
-   Nothing here advances on a timer. If a step is skipped (a greeting has
+   Nothing here advances on a timer, and no elapsed-seconds counter is
+   shown: the stepper and the server's detail line already say what is
+   happening, which is what a reader waiting on a search needs. If a step is skipped (a greeting has
    no retrieval at all), the stepper jumps, because that is what happened.
    The detail line under the steps is the server's own sentence - "Reading
    2 relevant judgments" - so it says what is being done, not what might be.
@@ -20,7 +22,6 @@
    Citations, next steps and the grounding badge stay absent until the
    answer is finished - showing placeholders for them would be a lie. */
 
-import { useEffect, useState } from 'react';
 import '../thinking.css';
 
 export const STAGES = [
@@ -107,10 +108,6 @@ function StepIcon({ id }) {
 
 const INDEX = Object.fromEntries(STAGES.map((s, i) => [s.id, i]));
 
-// Past this, the elapsed counter appears. Before it, a number is noise;
-// after it, it is the difference between "slow" and "broken".
-const SHOW_SECS_AFTER = 6;
-
 export default function StreamingAnswer({ body, status, brand = 'Research' }) {
   const text = body || '';
   const writing = text.trim().length > 0;
@@ -126,8 +123,6 @@ export default function StreamingAnswer({ body, status, brand = 'Research' }) {
     (status && INDEX[status.stage] === current && status.detail) ||
     (active ? active.label : 'Preparing your question');
 
-  const secs = useElapsed();
-
   return (
     <div className="demo-card think-card">
       <span className="think-rail" aria-hidden="true" />
@@ -137,7 +132,6 @@ export default function StreamingAnswer({ body, status, brand = 'Research' }) {
         <span className={`think-pill${writing ? ' is-writing' : ''}`}>
           <span className="think-orb" aria-hidden="true" />
           <span className="think-label">{active ? active.label : 'Starting'}</span>
-          {secs >= SHOW_SECS_AFTER && <span className="think-secs">{secs}s</span>}
         </span>
       </div>
 
@@ -183,14 +177,4 @@ export default function StreamingAnswer({ body, status, brand = 'Research' }) {
       </p>
     </div>
   );
-}
-
-function useElapsed() {
-  const [secs, setSecs] = useState(0);
-  useEffect(() => {
-    const started = Date.now();
-    const id = setInterval(() => setSecs(Math.floor((Date.now() - started) / 1000)), 1000);
-    return () => clearInterval(id);
-  }, []);
-  return secs;
 }

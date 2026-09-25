@@ -24,7 +24,7 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { ADVOCATE_BOT_KEY } from '../AuthContext';
-import { recommendAdvocates } from '../advocateBotApi';
+import { recommendAdvocatesStream } from '../advocateBotApi';
 import JusticeMark from './JusticeMark';
 import { Avatar, Chips, DemoBadge, locationOf } from './NetworkBits';
 import '../advocatebot.css';
@@ -78,6 +78,9 @@ export default function AdvocateBot({ token, onViewProfile, onConnect }) {
   const [turns, setTurns] = useState(() => saved?.turns || []);
   const [draft, setDraft] = useState('');
   const [busy, setBusy] = useState(false);
+  // Live progress for the turn being answered: one entry per step the
+  // server has actually started, in order. The last one is in progress.
+  const [steps, setSteps] = useState([]);
   const [error, setError] = useState('');
   const endRef = useRef(null);
   const inputRef = useRef(null);
@@ -127,10 +130,18 @@ export default function AdvocateBot({ token, onViewProfile, onConnect }) {
     setTurns((prev) => [...prev, { role: 'user', content: question }]);
     setDraft('');
     setBusy(true);
+    setSteps([]);
     setError('');
 
     try {
-      const data = await recommendAdvocates(token, { message: question, history });
+      const data = await recommendAdvocatesStream(
+        token,
+        { message: question, history },
+        {
+          onStatus: ({ stage, detail }) =>
+            setSteps((prev) => [...prev, { stage, detail }]),
+        },
+      );
       setTurns((prev) => [
         ...prev,
         {
@@ -146,6 +157,7 @@ export default function AdvocateBot({ token, onViewProfile, onConnect }) {
       setError(err.message);
     } finally {
       setBusy(false);
+      setSteps([]);
     }
   }
 
@@ -254,10 +266,23 @@ export default function AdvocateBot({ token, onViewProfile, onConnect }) {
         )}
 
         {busy && (
-          <div className="ab-busy">
-            <span className="spinner spinner-dark" />
-            Searching the directory&hellip;
-          </div>
+          // The server's own steps, as they happen: finished ones ticked,
+          // the current one spinning. Nothing here is on a timer.
+          <ol className="ab-steps" aria-live="polite">
+            {(steps.length ? steps : [{ stage: 'start', detail: 'Starting' }]).map((st, i, all) => {
+              const current = i === all.length - 1;
+              return (
+                <li key={`${st.stage}-${i}`} className={`ab-step${current ? ' is-current' : ' is-done'}`}>
+                  {current ? (
+                    <span className="spinner spinner-dark" />
+                  ) : (
+                    <span className="ab-step-tick" aria-hidden="true">✓</span>
+                  )}
+                  {st.detail}
+                </li>
+              );
+            })}
+          </ol>
         )}
         {error && <div className="ab-error">{error}</div>}
         <div ref={endRef} />

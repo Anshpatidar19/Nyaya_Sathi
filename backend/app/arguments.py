@@ -19,9 +19,9 @@ information, which is why it lives behind require_advocate.
 """
 
 import logging
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 
-from . import gemini, kanoon, reasoning, statutes
+from . import dynamic_query, gemini, kanoon, reasoning, statutes
 
 logger = logging.getLogger(__name__)
 
@@ -56,29 +56,60 @@ def list_sides() -> List[Dict[str, str]]:
 # Retrieval
 # ---------------------------------------------------------------------------
 
-async def _ground(facts: str, issue: Optional[str], state: Optional[str]) -> List[Dict[str, Any]]:
+MAX_STATUTE_SOURCES = 6
+# Typed facts up to this length are the advocate's own summary, and are
+# searched as a whole as well as clause by clause.
+SHORT_FACTS_CHARS = 700
+
+
+Reporter = Optional[Callable[[str, str], None]]
+
+
+def _report(report: Reporter, stage: str, detail: str) -> None:
+    """Progress for the live stepper - see drafting._report."""
+    if report is None:
+        return
+    try:
+        report(stage, detail)
+    except Exception:
+        logger.debug("Progress report failed for stage %s", stage)
+
+
+async def _ground(
+    facts: str,
+    issue: Optional[str],
+    state: Optional[str],
+    report: Reporter = None,
+) -> List[Dict[str, Any]]:
     """Statutes first, then case law. Both become numbered sources.
 
-    The issue statement, when given, is a much better retrieval query than a
-    wall of pleading text - so it is searched separately and its hits go in
-    first, where the model is most likely to lean on them.
+    Every query comes from this matter (dynamic_query.py): the issue the
+    advocate raised, the provisions the facts or pleading name, and the
+    most legally-loaded passages of the material - fused by rank. It used
+    to be the issue plus facts[:600], which for an uploaded pleading is the
+    cause title and the list of parties.
     """
-    queries = [q for q in (issue, facts[:600]) if q and q.strip()]
-
-    seen = set()
-    sources: List[Dict[str, Any]] = []
-
-    for q in queries:
-        for hit in statutes.search(q, limit=STATUTES_PER_QUERY):
-            key = (hit["act_key"], hit["section"])
-            if key in seen:
-                continue
-            seen.add(key)
-            sources.append(statutes.as_source(hit))
+    user_text = " ".join(
+        t for t in (issue, facts if len(facts) <= SHORT_FACTS_CHARS else "") if t
+    ).strip()
+    _report(report, "search", "Searching the statutes that govern this matter")
+    plan = dynamic_query.build_queries(user_text=user_text, document_text=facts)
+    hits = dynamic_query.retrieve(
+        plan, limit=MAX_STATUTE_SOURCES, per_query=STATUTES_PER_QUERY
+    )
+    sources: List[Dict[str, Any]] = [statutes.as_source(hit) for hit in hits]
+    n = len(sources)
+    _report(
+        report, "fetch",
+        f"Found {n} statute section{'s' if n != 1 else ''} - searching case law on Indian Kanoon"
+        if n else "Searching case law on Indian Kanoon",
+    )
 
     # Case law. An argument set without judgments is thin, so this is worth
-    # the API spend - but the fetch count stays capped.
-    query = reasoning.refine_query(issue or facts[:400], None)
+    # the API spend - but it is still exactly one metered search, and the
+    # fetch count stays capped. The query is built from the issue and the
+    # material's own distinctive terms, not its first 400 characters.
+    query = dynamic_query.kanoon_query(issue, facts)
     try:
         results = await kanoon.search(query, state=state)
     except Exception as exc:
@@ -87,6 +118,9 @@ async def _ground(facts: str, issue: Optional[str], state: Optional[str]) -> Lis
 
     if results:
         ranked = kanoon.rank_by_citations(results[:KANOON_CANDIDATES], top=KANOON_FETCHES)
+        if ranked:
+            _report(report, "fetch",
+                    f"Reading {len(ranked)} relevant judgment{'s' if len(ranked) != 1 else ''}")
         try:
             sources.extend(await reasoning._hydrate(ranked, query))
         except Exception as exc:
@@ -304,6 +338,7 @@ async def generate(
     court: Optional[str] = None,
     state: Optional[str] = None,
     document_name: Optional[str] = None,
+    report: Reporter = None,
 ) -> Dict[str, Any]:
     """Build the argument set. Raises ValueError if there is nothing to work with."""
     text = (facts or "").strip()
@@ -319,7 +354,7 @@ async def generate(
     side_id = side if side in _SIDE_IDS else "petitioner"
     side_label = next(s["label"] for s in SIDES if s["id"] == side_id)
 
-    sources = await _ground(text, issue, state)
+    sources = await _ground(text, issue, state, report)
 
     prompt = (
         f"THE ADVOCATE APPEARS FOR: the {side_label}\n"
@@ -332,6 +367,7 @@ async def generate(
         "Build the argument set now, as JSON."
     )
 
+    _report(report, "analyze", f"Building arguments for the {side_label}")
     data = gemini._parse_json(
         await gemini._generate(
             prompt,
@@ -340,6 +376,7 @@ async def generate(
             max_output_tokens=8000,
         )
     )
+    _report(report, "generate", "Linking each argument to its authorities")
 
     n = len(sources)
 

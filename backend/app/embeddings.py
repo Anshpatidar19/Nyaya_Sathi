@@ -196,7 +196,26 @@ def _embed(texts: Sequence[str], task_type: str) -> List[List[float]]:
             for t in texts
         ]
     }
-    data = _post(url, payload)
+    # The embedding API returns no token counts, so the cost line uses an
+    # estimate (~4 characters per token) and says so.
+    from . import usage_log
+
+    started = time.perf_counter()
+    est_tokens = sum(usage_log.estimate_tokens(t) for t in texts)
+    try:
+        data = _post(url, payload)
+    except Exception as exc:
+        usage_log.record(
+            model=MODEL, input_tokens=0, output_tokens=0,
+            latency_ms=(time.perf_counter() - started) * 1000,
+            status="error", error=str(exc), tokens_estimated=True,
+        )
+        raise
+    usage_log.record(
+        model=MODEL, input_tokens=est_tokens, output_tokens=0,
+        latency_ms=(time.perf_counter() - started) * 1000,
+        status="success", tokens_estimated=True,
+    )
     vectors = [_normalize(e["values"]) for e in data.get("embeddings", [])]
     if len(vectors) != len(texts):
         raise EmbeddingError(

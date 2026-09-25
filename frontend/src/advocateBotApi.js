@@ -5,7 +5,26 @@
    served from a cache - the directory and the user's connections both move
    underneath it. */
 
+import { postWithProgress } from './api';
+
 const BASE_URL = import.meta.env.VITE_API_URL || 'http://127.0.0.1:8000';
+
+// Same request with live progress: onStatus({stage, detail}) fires as the
+// server understands the request, searches the directory and ranks the
+// matches, then the same payload recommendAdvocates returns comes back.
+export async function recommendAdvocatesStream(token, { message, history = [] }, { onStatus } = {}) {
+  return postWithProgress(
+    `${BASE_URL}/network/advocates/recommend/stream`,
+    token,
+    {
+      message,
+      history: history
+        .slice(-4)
+        .map((t) => ({ role: t.role, content: t.content || '' })),
+    },
+    { onStatus },
+  );
+}
 
 export async function recommendAdvocates(token, { message, history = [] }) {
   const res = await fetch(`${BASE_URL}/network/advocates/recommend`, {

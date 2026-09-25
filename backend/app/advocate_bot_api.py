@@ -355,16 +355,54 @@ CLARIFY = (
 # Endpoint
 # ---------------------------------------------------------------------------
 
+def _progress(report, stage: str, detail: str) -> None:
+    """One step for the live progress line in the chat - see main._stream_job."""
+    if report is None:
+        return
+    try:
+        report(stage, detail)
+    except Exception:
+        logger.debug("Progress report failed for stage %s", stage)
+
+
 @router.post("/recommend", response_model=RecommendOut)
 async def recommend_advocates(
     payload: RecommendIn,
     db: Session = Depends(get_db),
     current_user: models.User = Depends(get_current_user),
 ):
+    return await _recommend_impl(payload, db, current_user)
+
+
+@router.post("/recommend/stream")
+async def recommend_advocates_stream(
+    payload: RecommendIn,
+    current_user: models.User = Depends(get_current_user),
+):
+    """/recommend with live progress, as Server-Sent Events.
+
+    Imported at call time: main.py imports this router, so a module-level
+    import of main would be circular. By the time a request arrives both
+    modules are fully loaded.
+    """
+    from .main import _stream_job
+    return _stream_job(
+        lambda db, report: _recommend_impl(payload, db, current_user, report),
+        response_model=RecommendOut,
+    )
+
+
+async def _recommend_impl(
+    payload: RecommendIn,
+    db: Session,
+    current_user: models.User,
+    report=None,
+) -> RecommendOut:
     message = payload.message.strip()
     if not message:
         raise HTTPException(status_code=400, detail="Ask a question first.")
 
+    _progress(report, "search", "Understanding what kind of lawyer you need")
     try:
         req = await parse_requirement(message, payload.history)
     except Exception as exc:
@@ -402,7 +440,17 @@ async def recommend_advocates(
     if req.is_broad():
         return RecommendOut(kind="clarify", reply=CLARIFY, understood=understood)
 
+    place = req.city or req.state
+    what = ", ".join(req.matter_keywords[:2]) or req.practice_area or "your matter"
+    _progress(
+        report, "fetch",
+        f"Searching the directory for {what}" + (f" near {place}" if place else ""),
+    )
     rows = _candidates(db, req)
+    _progress(
+        report, "analyze",
+        f"Ranking {len(rows)} advocate{'s' if len(rows) != 1 else ''} by location and fit",
+    )
 
     if not rows:
         return RecommendOut(
@@ -455,6 +503,7 @@ async def recommend_advocates(
     )
     widened = has_location and not thin and best_tier > target_tier
 
+    _progress(report, "finalize", "Preparing your shortlist")
     conns = _connections(db, current_user.id, [s[4].id for s in top])
 
     items = []

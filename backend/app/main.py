@@ -39,7 +39,7 @@ from . import (
     supabase_auth,
 )
 from .auth import ensure_profile, get_current_user, require_advocate
-from . import answer_cache
+from . import answer_cache, usage_log
 from .matters_api import router as matters_router
 from .network_api import router as network_router
 from .doc_intel_api import router as doc_intel_router
@@ -75,6 +75,98 @@ def _sse(obj: dict) -> str:
     return f"data: {json.dumps(obj, default=str)}\n\n"
 
 
+def _progress(report, stage: str, detail: str) -> None:
+    """Send one pipeline step to a live progress stream, if there is one."""
+    if report is None:
+        return
+    try:
+        report(stage, detail)
+    except Exception:   # progress is cosmetic; it must never break a result
+        logger.debug("Progress report failed for stage %s", stage)
+
+
+_SSE_HEADERS = {
+    "Cache-Control": "no-cache",
+    "Connection": "keep-alive",
+    # nginx buffers SSE by default and the stream arrives all at once.
+    "X-Accel-Buffering": "no",
+}
+
+
+def _stream_job(job, response_model=None) -> StreamingResponse:
+    """Run a request as Server-Sent Events with live progress.
+
+    `job(db, report)` is the same code the plain endpoint runs; `report`
+    (stage, detail) is called each time a pipeline step actually starts.
+    The frames are the ones /ask/stream already sends, so the frontend
+    draws the same stepper for every mode:
+
+      status  {stage, detail}   search | fetch | analyze | generate | finalize
+      done    {answer}          the finished payload, same shape as the
+                                plain endpoint's JSON
+      error   {message, status} status 422 is a refusal to show as a reply;
+                                anything else is a failure to retry
+
+    The job gets its own database session: the request-scoped one is closed
+    as soon as the route returns, which is before this generator runs.
+
+    `response_model` is the plain route's response model. The `done` payload
+    goes through it too, so both routes return byte-for-byte the same shape
+    (defaults filled in, unknown keys dropped).
+    """
+    async def events():
+        queue: asyncio.Queue = asyncio.Queue()
+
+        def report(stage: str, detail: str) -> None:
+            queue.put_nowait({"type": "status", "stage": stage, "detail": detail})
+
+        async def run():
+            db = SessionLocal()
+            try:
+                return await job(db, report)
+            finally:
+                db.close()
+
+        task = asyncio.create_task(run())
+        try:
+            while True:
+                getter = asyncio.ensure_future(queue.get())
+                done, _ = await asyncio.wait(
+                    {task, getter}, return_when=asyncio.FIRST_COMPLETED
+                )
+                if getter in done:
+                    yield _sse(getter.result())
+                    continue
+                getter.cancel()
+                break
+            while not queue.empty():
+                yield _sse(queue.get_nowait())
+
+            try:
+                result = task.result()
+            except HTTPException as exc:
+                yield _sse({"type": "error", "message": exc.detail, "status": exc.status_code})
+                return
+            except Exception as exc:
+                logger.exception("Streamed job failed: %s", exc)
+                yield _sse({"type": "error", "message": "Something went wrong. Please try again.",
+                            "status": 500})
+                return
+            if response_model is not None and not isinstance(result, response_model):
+                result = response_model.model_validate(result)
+            if hasattr(result, "model_dump"):
+                result = result.model_dump(mode="json")
+            yield _sse({"type": "done", "answer": result})
+        finally:
+            if not task.done():
+                # The reader went away mid-job. Let it finish in the
+                # background rather than cancelling half-way through a
+                # history write.
+                logger.info("Stream closed before the job finished; it will complete in the background")
+
+    return StreamingResponse(events(), media_type="text/event-stream", headers=_SSE_HEADERS)
+
+
 # Paths whose timing is noise. The badge poller hits /network/unread on a
 # timer from every mounted component, and logging each one buries the
 # requests worth reading.
@@ -94,13 +186,41 @@ async def log_request_time(request, call_next):
     the answer rather than in it.
     """
     start = time.perf_counter()
-    response = await call_next(request)
+    # Cost tracking for this request: every model call made while serving it
+    # (including after this function returns, while a streamed answer is
+    # still being written) is added to `usage`, and the QUERY_COST total is
+    # printed once the last byte of the body has gone out.
+    usage, token = usage_log.begin_request(request.method, request.url.path)
+    try:
+        response = await call_next(request)
+    except Exception:
+        usage_log.summarize(usage, 500)
+        usage_log.end_request(token)
+        raise
+    http_status = response.status_code
+
     if request.url.path not in _QUIET_PATHS:
         logger.info(
             "REQUEST %s %s -> %s in %.2fs",
             request.method, request.url.path, response.status_code,
             time.perf_counter() - start,
         )
+
+    body = getattr(response, "body_iterator", None)
+    if body is None:
+        usage_log.summarize(usage, http_status)
+        usage_log.end_request(token)
+        return response
+
+    async def _body_then_summary():
+        try:
+            async for chunk in body:
+                yield chunk
+        finally:
+            usage_log.summarize(usage, http_status)
+
+    response.body_iterator = _body_then_summary()
+    usage_log.end_request(token)
     return response
 
 
@@ -1468,12 +1588,14 @@ def draft_types(current_user: models.User = Depends(get_current_user)):
     return drafting.list_types()
 
 
-@app.post("/draft", response_model=schemas.DraftResponse)
-async def create_draft(
+async def _draft_impl(
     payload: schemas.DraftRequest,
-    db: Session = Depends(get_db),
-    current_user: models.User = Depends(get_current_user),
-):
+    db: Session,
+    current_user: models.User,
+    report=None,
+) -> dict:
+    """The whole /draft request. Shared by /draft and /draft/stream; `report`
+    receives each pipeline step as it starts (see _stream_job)."""
     if not payload.instructions.strip():
         raise HTTPException(status_code=400, detail="Describe what you need drafted.")
 
@@ -1484,7 +1606,7 @@ async def create_draft(
 
     try:
         result = await drafting.draft(
-            payload.doc_type, payload.instructions, payload.details
+            payload.doc_type, payload.instructions, payload.details, report=report
         )
     except Exception as exc:
         logger.exception("Draft failed: %s", exc)
@@ -1501,6 +1623,7 @@ async def create_draft(
             or "Not enough information to draft this. Add more detail and retry.",
         )
 
+    _progress(report, "finalize", "Saving the draft to your history")
     # Saved the same way /ask saves a turn, so drafts show up in the sidebar
     # history and can be reopened later - this used to not happen at all.
     title_seed = payload.instructions[:80]
@@ -1528,6 +1651,27 @@ async def create_draft(
     result["conversation_id"] = convo.id
     result["query_log_id"] = query_log_id
     return result
+
+
+@app.post("/draft", response_model=schemas.DraftResponse)
+async def create_draft(
+    payload: schemas.DraftRequest,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user),
+):
+    return await _draft_impl(payload, db, current_user)
+
+
+@app.post("/draft/stream")
+async def create_draft_stream(
+    payload: schemas.DraftRequest,
+    current_user: models.User = Depends(get_current_user),
+):
+    """/draft with live progress - Server-Sent Events, see _stream_job."""
+    return _stream_job(
+        lambda db, report: _draft_impl(payload, db, current_user, report),
+        response_model=schemas.DraftResponse,
+    )
 
 
 def _docx_filename(title: str) -> str:
@@ -1593,17 +1737,17 @@ def argument_sides(current_user: models.User = Depends(require_advocate)):
     return arguments.list_sides()
 
 
-@app.post("/arguments", response_model=schemas.ArgumentsResponse)
-async def generate_arguments(
+async def _arguments_impl(
     payload: schemas.ArgumentsRequest,
-    db: Session = Depends(get_db),
-    current_user: models.User = Depends(require_advocate),
-):
+    db: Session,
+    current_user: models.User,
+    report=None,
+) -> dict:
     """Build arguments, the opposing case, and rebuttals for one side.
 
-    Advocate-only: this produces advocacy, not the neutral legal information
-    the Ask surface gives. A general user asking "what should I argue" should
-    be talking to a lawyer, not to this.
+    Advocate-only (the routes use require_advocate): this produces advocacy,
+    not the neutral legal information the Ask surface gives. A general user
+    asking "what should I argue" should be talking to a lawyer, not to this.
     """
     facts = (payload.facts or "").strip()
     document_name = None
@@ -1613,6 +1757,7 @@ async def generate_arguments(
     _gate_request(facts, allow_short=bool(payload.document_id))
 
     if payload.document_id:
+        _progress(report, "search", "Reading the case document")
         doc, doc_text = await _load_document(db, payload.document_id, current_user)
         await _gate_document(doc_text, doc.filename, doc.storage_path)
         document_name = doc.filename
@@ -1627,13 +1772,14 @@ async def generate_arguments(
         )
 
     try:
-        return await arguments.generate(
+        result = await arguments.generate(
             facts=facts,
             side=payload.side,
             issue=payload.issue,
             court=payload.court,
             state=payload.state or current_user.state,
             document_name=document_name,
+            report=report,
         )
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc))
@@ -1643,14 +1789,37 @@ async def generate_arguments(
             status_code=503,
             detail="Could not generate arguments for that matter. Try again.",
         )
+    _progress(report, "finalize", "Assembling the argument set")
+    return result
 
 
-@app.post("/review", response_model=schemas.ReviewResponse)
-async def review_document(
-    payload: schemas.ReviewRequest,
+@app.post("/arguments", response_model=schemas.ArgumentsResponse)
+async def generate_arguments(
+    payload: schemas.ArgumentsRequest,
     db: Session = Depends(get_db),
-    current_user: models.User = Depends(get_current_user),
+    current_user: models.User = Depends(require_advocate),
 ):
+    return await _arguments_impl(payload, db, current_user)
+
+
+@app.post("/arguments/stream")
+async def generate_arguments_stream(
+    payload: schemas.ArgumentsRequest,
+    current_user: models.User = Depends(require_advocate),
+):
+    """/arguments with live progress - Server-Sent Events, see _stream_job."""
+    return _stream_job(
+        lambda db, report: _arguments_impl(payload, db, current_user, report),
+        response_model=schemas.ArgumentsResponse,
+    )
+
+
+async def _review_impl(
+    payload: schemas.ReviewRequest,
+    db: Session,
+    current_user: models.User,
+    report=None,
+) -> dict:
     """Red-line a counterparty's document. Accepts raw text or an uploaded file id.
 
     Open to every logged-in account. Anyone can be handed a rent agreement
@@ -1669,6 +1838,7 @@ async def review_document(
     # attachment and got reviewed as if IT were the document - a dozen
     # characters, always short-circuited as unreadable.
     if payload.document_id:
+        _progress(report, "search", "Reading your document")
         doc, doc_text = await _load_document(db, payload.document_id, current_user)
         filename = doc.filename
         if text:
@@ -1692,7 +1862,7 @@ async def review_document(
     await _gate_document(text, filename or "")
 
     try:
-        result = await drafting.review(text, payload.doc_type, context)
+        result = await drafting.review(text, payload.doc_type, context, report=report)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
     except Exception as exc:
@@ -1705,6 +1875,7 @@ async def review_document(
         else:
             result.document_name = filename
 
+    _progress(report, "finalize", "Saving the review to your history")
     # Same history save as /draft - a review is a turn too, and previously
     # vanished the moment the response left the server.
     title_seed = f"Review: {filename}" if filename else (payload.doc_type or "Document review")
@@ -1729,3 +1900,30 @@ async def review_document(
     else:
         result.conversation_id = convo.id
     return result
+
+
+@app.post("/review", response_model=schemas.ReviewResponse)
+async def review_document(
+    payload: schemas.ReviewRequest,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user),
+):
+    """Red-line a counterparty's document. Accepts raw text or an uploaded file id.
+
+    Open to every logged-in account. Anyone can be handed a rent agreement
+    or a notice to sign - they don't need to be an advocate to want the
+    risky clauses flagged before they do.
+    """
+    return await _review_impl(payload, db, current_user)
+
+
+@app.post("/review/stream")
+async def review_document_stream(
+    payload: schemas.ReviewRequest,
+    current_user: models.User = Depends(get_current_user),
+):
+    """/review with live progress - Server-Sent Events, see _stream_job."""
+    return _stream_job(
+        lambda db, report: _review_impl(payload, db, current_user, report),
+        response_model=schemas.ReviewResponse,
+    )
