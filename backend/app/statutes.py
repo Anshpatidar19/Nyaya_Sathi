@@ -745,7 +745,10 @@ def act_overview(query: str) -> Optional[Dict[str, str]]:
         return None
     raw = re.sub(r"\s+", " ", m.group(2).lower()).strip()
     key = _ACT_ALIASES.get(raw, raw)
-    return _OVERVIEWS.get(key)
+    ov = _OVERVIEWS.get(key)
+    # The key rides along so the source card can resolve a live link for the
+    # whole act (see source_links.act_direct_url).
+    return {**ov, "act_key": key} if ov else None
 
 
 # --- direct citation lookup, e.g. "BNS 85", "section 318 of BNS" ----------
@@ -1091,5 +1094,7 @@ def overview_as_source(ov: Dict[str, str]) -> Dict[str, Any]:
         "date": None,
         "snippet": ov["text"][:300],
         "text": ov["text"],
-        "url": ov["url"],
+        # India Code's per-act pages fail behind their CDN too often to be a
+        # citation target; this hands out the act's Kanoon document instead.
+        "url": source_links.act_direct_url(ov.get("act_key"), ov.get("url")),
     }
