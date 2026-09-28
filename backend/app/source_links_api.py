@@ -43,6 +43,22 @@ async def open_statute_source(act_key: str, section: str):
     return HTMLResponse(_section_page(doc))
 
 
+@router.get("/sources/act/{act_key}")
+async def open_act_source(act_key: str):
+    """Whole-act link for overview cards: Kanoon's copy of the act, else the
+    act's original page. Only acts that have an overview are accepted."""
+    ov = statutes._OVERVIEWS.get(act_key)
+    if not ov:
+        raise HTTPException(status_code=404, detail="Unknown act.")
+
+    tid = await source_links.resolve_act(act_key, ov.get("title") or "")
+    if tid:
+        return RedirectResponse(source_links.KANOON_DOC_URL.format(tid=tid), status_code=302)
+    if ov.get("url"):
+        return RedirectResponse(ov["url"], status_code=302)
+    raise HTTPException(status_code=404, detail="No public copy of this act is linked.")
+
+
 def _section_page(doc: dict) -> str:
     e = html.escape
     unit = doc.get("unit") or "Section"

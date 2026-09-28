@@ -331,6 +331,114 @@ async def resolve(doc: Dict[str, Any], *, force: bool = False) -> Optional[str]:
 
 
 # ---------------------------------------------------------------------------
+# Whole-act links (act overview cards)
+# ---------------------------------------------------------------------------
+# Overview cards used to link straight to India Code
+# (indiacode.nic.in/handle/...). India Code sits behind an Akamai edge that
+# regularly answers with "An error occurred while processing your request"
+# or hangs, so those cards opened a dead tab. They now go through
+# /sources/act/<act_key>, which redirects to the act's own Indian Kanoon
+# document, and only falls back to India Code if Kanoon has none.
+
+_FLAKY_HOSTS = ("indiacode.nic.in",)
+
+
+def _act_key(act_key: str) -> str:
+    return f"{act_key}:__act__"
+
+
+def is_flaky_url(url: Optional[str]) -> bool:
+    return bool(url) and any(h in urlparse(url).netloc for h in _FLAKY_HOSTS)
+
+
+def act_resolver_url(act_key: str) -> str:
+    return f"{_api_base()}/sources/act/{quote(act_key, safe='')}"
+
+
+def is_act_resolver_url(url: Optional[str]) -> bool:
+    return bool(url) and "/sources/act/" in url
+
+
+def act_direct_url(act_key: Optional[str], fallback: Optional[str]) -> Optional[str]:
+    """Best link for a whole act. Synchronous, no network."""
+    if not act_key:
+        return fallback
+    entry = _load().get(_act_key(act_key))
+    if entry and entry.get("docid"):
+        return KANOON_DOC_URL.format(tid=entry["docid"])
+    # Only reroute hosts known to fail; a working per-act page stays as is.
+    if fallback and not is_flaky_url(fallback):
+        return fallback
+    return act_resolver_url(act_key)
+
+
+def _act_title_matches(kanoon_title: str, act_name: str) -> bool:
+    """Is this Kanoon document the whole act (not one of its sections)?"""
+    t = kanoon_title or ""
+    if _TITLE_RE.match(t):
+        return False
+    ours, theirs = _norm_act(act_name), _norm_act(t)
+    if ours == theirs:
+        return True
+    y_ours, y_theirs = _YEAR_RE.search(act_name), _YEAR_RE.search(t)
+    if y_ours and y_theirs:
+        return False
+    return _norm_act(act_name, True) == _norm_act(t, True)
+
+
+async def resolve_act(act_key: str, act_name: str, *, force: bool = False) -> Optional[str]:
+    """Kanoon tid for a whole act, looked up once and remembered."""
+    if not act_key or not act_name:
+        return None
+    key = _act_key(act_key)
+    entry = _load().get(key)
+    if entry and entry.get("docid"):
+        return entry["docid"]
+    if not force and _is_fresh_miss(entry):
+        return None
+
+    lock = _key_locks.setdefault(key, asyncio.Lock())
+    async with lock:
+        entry = _load().get(key)
+        if entry and entry.get("docid"):
+            return entry["docid"]
+        if not force and _is_fresh_miss(entry):
+            return None
+
+        from . import kanoon
+
+        hit = None
+        for query in (f'"{act_name}"', f"The {act_name}"):
+            try:
+                results = await asyncio.wait_for(
+                    kanoon.search(query, doctypes="doctypes: laws"), _RESOLVE_TIMEOUT
+                )
+            except Exception as exc:
+                logger.warning("Kanoon act lookup for %s failed (%s)", key, exc)
+                return None
+            hit = next(
+                (r for r in results if _act_title_matches(r.get("title", ""), act_name)),
+                None,
+            )
+            if hit:
+                break
+        _load()[key] = {
+            "docid": hit["docid"] if hit else None,
+            "title": hit["title"] if hit else None,
+            "at": int(time.time()),
+        }
+        try:
+            _save()
+        except Exception as exc:
+            logger.warning("Could not persist act id for %s (%s)", key, exc)
+        if hit:
+            logger.info("Resolved act %s -> Kanoon doc %s (%s)", act_key, hit["docid"], hit["title"])
+            return hit["docid"]
+        logger.info("No Kanoon document for the whole act %s (%s)", act_key, act_name)
+        return None
+
+
+# ---------------------------------------------------------------------------
 # Upgrading links stored before this change
 # ---------------------------------------------------------------------------
 # Conversation payloads saved earlier carry search URLs. They are rewritten on
@@ -376,7 +484,22 @@ def _legacy_to_doc(url: str) -> Optional[Dict[str, Any]]:
     return None
 
 
+def _overview_key_for_url(url: str) -> Optional[str]:
+    from . import statutes
+    for key, ov in statutes._OVERVIEWS.items():
+        if ov.get("url") == url:
+            return key
+    return None
+
+
 def _upgrade_url(url: str) -> str:
+    if is_flaky_url(url):
+        # An overview card saved with a direct India Code link.
+        key = _overview_key_for_url(url)
+        return act_direct_url(key, url) if key else url
+    if is_act_resolver_url(url):
+        key = unquote(urlparse(url).path.rstrip("/").split("/")[-1])
+        return act_direct_url(key, None) or url
     if is_search_url(url):
         doc = _legacy_to_doc(url)
         return direct_url(doc) if doc else url
