@@ -161,6 +161,11 @@ def lookup(db: Session, question: str, state: Optional[str]) -> Optional[Dict[st
             return None
 
         payload = json.loads(row.payload_json)
+        # Cached answers are shared across machines and outlive config
+        # changes, so their source links can point at a stale backend origin
+        # or a Kanoon search. Rewrite them the same way stored chats are.
+        from . import source_links
+        source_links.upgrade_links(payload)
         # Never replayed as pending: the badge in the row is the checked one.
         payload["grounding_pending"] = False
         # The thread this answer lands in is decided per request.
