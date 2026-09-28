@@ -133,15 +133,58 @@ def is_search_url(url: Optional[str]) -> bool:
     return "indiankanoon.org" in p.netloc and p.path.rstrip("/").endswith("/search")
 
 
-def resolver_url(act_key: str, section: str) -> str:
+_DEFAULT_API_BASE = "http://127.0.0.1:8000"
+_base_checked = False
+
+
+def _api_base() -> str:
     # Lazy: config raises without DATABASE_URL, and statutes.py (which
     # imports this module) must stay importable for the offline eval.
     try:
         from .config import settings
-        base = (settings.public_api_url or "").rstrip("/")
+        base = (settings.public_api_url or "").strip().rstrip("/")
+        site = (settings.site_url or "").rstrip("/")
     except Exception:
-        base = os.getenv("PUBLIC_API_URL", "http://127.0.0.1:8000").rstrip("/")
-    return f"{base}/sources/statute/{quote(act_key, safe='')}/{quote(section, safe='')}"
+        base = (os.getenv("PUBLIC_API_URL") or "").strip().rstrip("/")
+        site = os.getenv("SITE_URL", "").rstrip("/")
+    # An empty `PUBLIC_API_URL=` line in .env overrides the default with "",
+    # which turns every resolver link into a relative "/sources/..." path -
+    # and the browser then opens it on the FRONTEND's origin. Treat blank as
+    # unset.
+    if not base:
+        base = _DEFAULT_API_BASE
+    _check_base(base, site)
+    return base
+
+
+def _check_base(base: str, site: str) -> None:
+    """Warn once if resolver links would open the frontend instead of the API.
+
+    PUBLIC_API_URL must be the BACKEND's public origin (the same value as the
+    frontend's VITE_API_URL). Pointing it at the React app makes every
+    unresolved source card open a blank Nyaya Sathi page, because the SPA has
+    no /sources/statute/ route. Pointing it at 127.0.0.1 on a deployed server
+    makes the card open the viewer's own machine, which is also a dead page.
+    """
+    global _base_checked
+    if _base_checked:
+        return
+    _base_checked = True
+    b = urlparse(base)
+    if not b.scheme or not b.netloc:
+        logger.warning("PUBLIC_API_URL=%r is not an absolute URL; source links will break", base)
+    elif site and b.netloc == urlparse(site).netloc:
+        logger.warning(
+            "PUBLIC_API_URL (%s) points at the frontend (SITE_URL). Source cards "
+            "will open a blank Nyaya Sathi page - set it to the backend origin.", base)
+    elif b.port in (5173, 4173, 3000):
+        logger.warning(
+            "PUBLIC_API_URL (%s) looks like a frontend dev server. Set it to the "
+            "backend origin (e.g. http://127.0.0.1:8000).", base)
+
+
+def resolver_url(act_key: str, section: str) -> str:
+    return f"{_api_base()}/sources/statute/{quote(act_key, safe='')}/{quote(section, safe='')}"
 
 
 def is_resolver_url(url: Optional[str]) -> bool:
@@ -338,12 +381,18 @@ def _upgrade_url(url: str) -> str:
         doc = _legacy_to_doc(url)
         return direct_url(doc) if doc else url
     if is_resolver_url(url):
-        # Resolved since it was stored? Hand out the Kanoon link directly.
         parts = urlparse(url).path.rstrip("/").split("/")
         if len(parts) >= 2:
-            tid = cached_docid(unquote(parts[-2]), unquote(parts[-1]))
+            act_key, section = unquote(parts[-2]), unquote(parts[-1])
+            # Resolved since it was stored? Hand out the Kanoon link directly.
+            tid = cached_docid(act_key, section)
             if tid:
                 return KANOON_DOC_URL.format(tid=tid)
+            # Otherwise rebuild it on the CURRENT backend origin. A stored
+            # link carries whatever PUBLIC_API_URL was when it was written -
+            # a wrong value, the other machine's value, or localhost from
+            # before deployment - and would keep opening a dead page forever.
+            return resolver_url(act_key, section)
     return url
 
 

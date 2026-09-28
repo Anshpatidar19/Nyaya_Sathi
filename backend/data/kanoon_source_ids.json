@@ -1,6 +1,16 @@
 {
  "version": 1,
  "ids": {
+  "bsa:112": {
+   "docid": "25778150",
+   "title": "Section 112 in Bharatiya Sakshya Adhiniyam , 2023",
+   "at": 1790586558
+  },
+  "bsa:16": {
+   "docid": "148921961",
+   "title": "Section 16 in Bharatiya Sakshya Adhiniyam , 2023",
+   "at": 1790586523
+  },
   "hma:1": {
    "docid": "1382400",
    "title": "Section 1 in The Hindu Marriage Act , 1955",
