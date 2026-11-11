@@ -1,6 +1,7 @@
 import asyncio
 import datetime
 import json
+import os
 import logging
 import re
 import time
@@ -61,9 +62,17 @@ Base.metadata.create_all(bind=engine)
 
 app = FastAPI(title="Nyaya Sathi API", version="0.2.0")
 
+# Deployed frontend origin(s), comma-separated, e.g.
+# CORS_ORIGINS=https://nyaya-sathi.vercel.app
+_extra_origins = [
+    o.strip().rstrip("/")
+    for o in os.getenv("CORS_ORIGINS", "").split(",")
+    if o.strip()
+]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
+    allow_origins=["http://localhost:5173", "http://127.0.0.1:5173", *_extra_origins],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
