@@ -35,6 +35,8 @@ General-purpose chatbots answer Indian legal questions fluently and cite section
 
 Nyaya Sathi is built so that a citation cannot be invented. Source cards are constructed from retrieved chunk metadata, never from model-generated text, and a post-generation gate rejects any citation marker that does not resolve to a retrieved chunk. Answer confidence is computed from retrieval signals rather than by asking the model how sure it is.
 
+Deployed URL: https://nyaya-sathi-wine.vercel.app
+
 Two audiences, one retrieval layer:
 
 - **Members** — citizens asking about a notice, an eviction, a bounced cheque. Plain-language answer, cited sources, and an ordered next step.
